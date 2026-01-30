@@ -1,0 +1,6 @@
+/* App.css is cleared for now as we use index.css for global styles and component-specific styles will be added later or inline for simplicity in this demo */
+.app-layout {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}

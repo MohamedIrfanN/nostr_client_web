@@ -164,6 +164,16 @@ async def get_me():
     return {"pubkey": my_pubkey, "profile": profile}
 
 
+@app.get("/users/{pubkey}/posts")
+async def get_user_posts(pubkey: str, limit: int | None = None):
+    try:
+        norm_pubkey = normalize_pubkey_input(pubkey)
+    except:
+        norm_pubkey = pubkey
+    events = await fetch_feed_events([norm_pubkey], limit=limit)
+    return {"count": len(events), "events": events}
+
+
 @app.post("/publish")
 async def publish_note(payload: PublishIn):
     content = (payload.content or "").strip()

@@ -3,6 +3,8 @@ import './App.css'
 import Feed from './features/Feed'
 import Search from './features/Search'
 import Messages from './features/Messages'
+import Profile from './features/Profile'
+import LoadingSpinner from './components/LoadingSpinner'
 import { api } from './services/api'
 import { useEffect } from 'react'
 import { shortenPubkey, generateGradient, getInitials } from './utils/format'
@@ -34,12 +36,8 @@ function App() {
       case 'messages':
         return <Messages />;
       case 'profile':
-        return (
-          <div className="card glass" style={{ padding: '40px', textAlign: 'center' }}>
-            <h2>Profile coming soon</h2>
-            <p style={{ color: 'var(--text-muted)', marginTop: '10px' }}>Your identity on the decentralized web.</p>
-          </div>
-        );
+        if (!currentUser) return <LoadingSpinner label="Identifying user..." size="large" />;
+        return <Profile pubkey={currentUser.pubkey} profile={currentUser.profile} />;
       default:
         return <Feed />;
     }

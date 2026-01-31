@@ -162,6 +162,16 @@ export const api = {
         return await response.json();
     },
 
+    async getUserPosts(pubkey: string): Promise<NostrEvent[]> {
+        const response = await fetch(`${API_BASE_URL}/users/${pubkey}/posts`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to fetch user posts: ${errorText}`);
+        }
+        const data = await response.json();
+        return data.events || [];
+    },
+
     async checkHealth(): Promise<boolean> {
         try {
             const response = await fetch(`${API_BASE_URL}/health`);

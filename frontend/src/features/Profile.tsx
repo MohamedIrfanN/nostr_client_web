@@ -5,7 +5,9 @@ import { wsService } from '../services/websocket';
 import type { WebSocketMessage } from '../services/websocket';
 import PostCard from '../components/PostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { generateGradient, getInitials } from '../utils/format';
+import { generateGradient, getInitials, formatPubkey } from '../utils/format';
+
+import { nip19 } from 'nostr-tools';
 
 interface ProfileProps {
     pubkey: string;
@@ -18,6 +20,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const [profile, setProfile] = useState(initialProfile);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
+    const [copied, setCopied] = useState(false);
 
     const fetchUserContent = useCallback(async () => {
         setLoading(true);
@@ -108,7 +111,34 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                         ) : (
                             <>
                                 <h2 className="profile-display-name">{displayName}</h2>
-                                <div className="profile-handle">@{handle}</div>
+                                <div className="profile-handle">
+                                    @{formatPubkey(pubkey)}
+                                    <button
+                                        className="copy-btn-icon"
+                                        onClick={() => {
+                                            try {
+                                                const npub = nip19.npubEncode(pubkey);
+                                                navigator.clipboard.writeText(npub);
+                                                setCopied(true);
+                                                setTimeout(() => setCopied(false), 2000);
+                                            } catch (err) {
+                                                console.error('Failed to copy', err);
+                                            }
+                                        }}
+                                        title="Copy public key"
+                                    >
+                                        {copied ? (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <polyline points="20 6 9 17 4 12"></polyline>
+                                            </svg>
+                                        ) : (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
                                 <div className="profile-bio">{bio}</div>
                             </>
                         )}

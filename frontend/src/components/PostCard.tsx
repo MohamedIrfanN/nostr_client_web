@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { NostrEvent } from '../services/api';
 import { api } from '../services/api';
-import { formatRelativeTime, generateGradient, getInitials, shortenPubkey } from '../utils/format';
+import { formatRelativeTime, generateGradient, getInitials, shortenPubkey, formatPubkey } from '../utils/format';
 import { getProfileWithCache } from '../services/profileCache';
 import CommentModal from './CommentModal';
 
@@ -164,7 +164,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
               style={{ cursor: 'pointer' }}
               onClick={(e) => navigateToProfile(e, event.pubkey)}
             >
-              @{shortenPubkey(event.pubkey)}
+              @{formatPubkey(event.pubkey)}
             </span>
             <span className="post-date">{relativeTime}</span>
           </div>
@@ -174,7 +174,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
                 className="reply-name"
                 onClick={(e) => navigateToProfile(e, replyToPubkey)}
               >
-                @{replyToProfile?.display_name || replyToProfile?.name || shortenPubkey(replyToPubkey)}
+                @{replyToProfile?.display_name || replyToProfile?.name || formatPubkey(replyToPubkey)}
               </span>
             </div>
           )}

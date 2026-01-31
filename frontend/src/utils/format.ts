@@ -1,5 +1,7 @@
+import { nip19 } from 'nostr-tools';
+
 /**
- * Format a timestamp as relative time (e.g., "5m", "2h", "3d", "2w")
+ * Format timestamp as relative time
  */
 export function formatRelativeTime(timestamp: number): string {
     const now = Date.now();
@@ -54,8 +56,22 @@ export function getInitials(name: string): string {
 
 /**
  * Shorten pubkey for display
+ * Deprecated: Use formatPubkey instead for npub format
  */
 export function shortenPubkey(pubkey: string): string {
     if (pubkey.length < 16) return pubkey;
     return `${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 8)}`;
+}
+
+/**
+ * Format pubkey to npub1... format
+ */
+export function formatPubkey(pubkey: string): string {
+    try {
+        const npub = nip19.npubEncode(pubkey);
+        return `${npub.substring(0, 10)}...${npub.substring(npub.length - 8)}`;
+    } catch (e) {
+        console.error('Failed to encode pubkey:', e);
+        return shortenPubkey(pubkey);
+    }
 }

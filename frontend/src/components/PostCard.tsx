@@ -43,6 +43,8 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [isLiking, setIsLiking] = useState(false);
   const [showCommentModal, setShowCommentModal] = useState(false);
+  const [replyToPubkey, setReplyToPubkey] = useState<string | null>(null);
+  const [replyToProfile, setReplyToProfile] = useState<ProfileData | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -57,6 +59,27 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
       }
     };
     fetchProfile();
+
+    // Check if it's a reply and extract the pubkey to show "Replying to"
+    const pTags = event.tags.filter(t => t[0] === 'p');
+    if (pTags.length > 0) {
+      // Prefer the 'reply' marker if standard NIP-10 tags are present, 
+      // otherwise take the first one (usually the one being replied to)
+      const replyTag = pTags.find(t => t[3] === 'reply') || pTags[0];
+      const targetPubkey = replyTag[1];
+      setReplyToPubkey(targetPubkey);
+
+      // Fetch the profile for the person being replied to
+      const fetchReplyProfile = async () => {
+        try {
+          const profileData = await getProfileWithCache(targetPubkey, api.getProfile);
+          if (profileData) setReplyToProfile(profileData);
+        } catch (err) {
+          console.error('Failed to fetch reply profile:', err);
+        }
+      };
+      fetchReplyProfile();
+    }
 
     // Check if this post is already liked
     const likedPosts = getLikedPosts();
@@ -118,10 +141,16 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           )}
         </div>
         <div className="post-meta">
-          <span className="post-author" title={event.pubkey}>{displayName}</span>
-          <span className="post-pubkey">@{shortenPubkey(event.pubkey)}</span>
-          <span className="post-date">{relativeTime}</span>
-          <button className="post-menu">⋯</button>
+          <div className="post-meta-top">
+            <span className="post-author" title={event.pubkey}>{displayName}</span>
+            <span className="post-pubkey">@{event.pubkey}</span>
+            <span className="post-date">{relativeTime}</span>
+          </div>
+          {replyToPubkey && (
+            <div className="post-reply-to">
+              Replying to <span className="reply-name">@{replyToProfile?.display_name || replyToProfile?.name || shortenPubkey(replyToPubkey)}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -228,6 +257,12 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         .post-meta {
           flex: 1;
           display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .post-meta-top {
+          display: flex;
           align-items: center;
           gap: 8px;
         }
@@ -239,31 +274,30 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         }
 
         .post-pubkey {
-          font-size: 14px;
+          font-size: 13px;
           color: #6b7280;
           font-weight: 400;
+        }
+
+        .post-reply-to {
+          font-size: 13px;
+          color: var(--text-muted);
+        }
+
+        .reply-name {
+          color: var(--accent-color, #7c4dff);
+          cursor: pointer;
+        }
+
+        .reply-name:hover {
+          text-decoration: underline;
         }
 
         .post-date {
           font-size: 14px;
           color: var(--text-muted);
-        }
-
-        .post-menu {
           margin-left: auto;
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          font-size: 18px;
-          cursor: pointer;
-          padding: 4px 8px;
-          border-radius: 4px;
-          transition: var(--transition);
-        }
-
-        .post-menu:hover {
-          background: rgba(255, 255, 255, 0.1);
-          color: var(--text-primary);
+          flex-shrink: 0;
         }
 
         .post-content {

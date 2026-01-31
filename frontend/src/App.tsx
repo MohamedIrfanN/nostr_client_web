@@ -43,7 +43,7 @@ function App() {
     <div className="app-container">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <div className="logo-icon">K</div>
+          <img src="/knot-logo.png" alt="Knot Logo" className="logo-icon" />
           <h2>Knot</h2>
         </div>
 
@@ -134,21 +134,14 @@ function App() {
         .sidebar-logo {
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 4px;
           padding: 8px 12px;
         }
 
         .logo-icon {
-          width: 32px;
-          height: 32px;
-          border-radius: 8px;
-          background: linear-gradient(135deg, #7c4dff, #9575cd);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 700;
-          font-size: 18px;
-          color: white;
+          width: 72px;
+          height: 72px;
+          object-fit: contain;
         }
 
         .sidebar-logo h2 {

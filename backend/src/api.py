@@ -365,6 +365,29 @@ async def ws_feed(websocket: WebSocket):
     await _run_ws(websocket, reqs_by_relay, event_type="feed")
 
 
+@app.websocket("/ws/users/{pubkey}")
+async def ws_user_feed(websocket: WebSocket, pubkey: str):
+    now = int(time.time())
+    
+    # Normalize pubkey if needed
+    try:
+        norm_pubkey = normalize_pubkey_input(pubkey)
+    except:
+        norm_pubkey = pubkey
+
+    reqs_by_relay: dict[str, list[list]] = {}
+    for relay in RELAYS:
+        sub_id = relay_manager.new_sub_id()
+        reqs_by_relay[relay] = [
+            relay_manager.make_req(
+                sub_id,
+                {"authors": [norm_pubkey], "kinds": [1], "since": now},
+            )
+        ]
+
+    await _run_ws(websocket, reqs_by_relay, event_type="feed")
+
+
 @app.websocket("/ws/dm")
 async def ws_dm(websocket: WebSocket):
     _, my_pubkey = _get_keys()

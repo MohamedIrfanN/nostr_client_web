@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 import type { NostrEvent } from '../services/api';
+import { wsService } from '../services/websocket';
+import type { WebSocketMessage } from '../services/websocket';
 import PostCard from '../components/PostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { generateGradient, getInitials } from '../utils/format';
@@ -41,6 +43,26 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     useEffect(() => {
         fetchUserContent();
     }, [fetchUserContent]);
+
+    // Live streaming subscription
+    useEffect(() => {
+        const cleanup = wsService.connect(
+            `users/${pubkey}`,
+            (message: WebSocketMessage) => {
+                if (message.type === 'feed' && message.event) {
+                    const newEvent = message.event;
+                    setPosts(prev => {
+                        // Avoid duplicates
+                        if (prev.some(p => p.id === newEvent.id)) return prev;
+                        // Add new post to top
+                        return [newEvent, ...prev];
+                    });
+                }
+            },
+            (err) => console.error('Profile stream error:', err)
+        );
+        return cleanup;
+    }, [pubkey]);
 
     const displayName = profile?.display_name || profile?.name || 'User';
     const handle = profile?.name || pubkey.substring(0, 8);

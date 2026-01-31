@@ -19,7 +19,7 @@ class WebSocketService {
     private reconnectDelay = 2000;
 
     connect(
-        endpoint: 'feed' | 'dm' | 'notify',
+        endpoint: string,
         onMessage: WebSocketCallback,
         onError?: (error: Event) => void
     ): () => void {

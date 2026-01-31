@@ -229,6 +229,8 @@ function App() {
 
         .content-area {
           padding: 0;
+          position: relative;
+          height: calc(100vh - 60px);
         }
 
         @media (max-width: 1024px) {

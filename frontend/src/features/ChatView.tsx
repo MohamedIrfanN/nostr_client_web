@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
 import { formatRelativeTime, getInitials, generateGradient } from '../utils/format';
+import { getProfileWithCache } from '../services/profileCache';
 
 interface ChatViewProps {
   partnerPubkey: string;
@@ -15,12 +16,20 @@ interface Message {
   from_me: boolean;
 }
 
+interface ProfileData {
+  display_name?: string;
+  name?: string;
+  picture?: string;
+}
+
 const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [imageError, setImageError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -32,6 +41,21 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch profile picture
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const profileData = await getProfileWithCache(partnerPubkey, api.getProfile);
+        if (profileData) {
+          setProfile(profileData);
+        }
+      } catch (err) {
+        console.error('Failed to fetch profile:', err);
+      }
+    };
+    fetchProfile();
+  }, [partnerPubkey]);
 
   // Fetch message history
   useEffect(() => {
@@ -145,18 +169,27 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
 
   const gradient = generateGradient(partnerPubkey);
   const initials = getInitials(partnerName);
+  const avatarUrl = profile?.picture && !imageError ? profile.picture : null;
 
   return (
     <div className="chat-view">
-      {/* Header */}
+      {/* Fixed Header */}
       <div className="chat-header">
         <button className="back-btn" onClick={onBack}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
-        <div className="chat-partner-avatar" style={{ background: gradient }}>
-          <span>{initials}</span>
+        <div className="chat-partner-avatar" style={{ background: avatarUrl ? 'transparent' : gradient }}>
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={partnerName}
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <span>{initials}</span>
+          )}
         </div>
         <div className="chat-partner-info">
           <div className="chat-partner-name">{partnerName}</div>
@@ -164,7 +197,7 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
         </div>
       </div>
 
-      {/* Messages */}
+      {/* Scrollable Messages */}
       <div className="chat-messages">
         {loading ? (
           <div className="chat-loading">Loading messages...</div>
@@ -179,8 +212,16 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
           messages.map((msg) => (
             <div key={msg.id} className={`message ${msg.from_me ? 'sent' : 'received'}`}>
               {!msg.from_me && (
-                <div className="message-avatar" style={{ background: gradient }}>
-                  <span>{initials}</span>
+                <div className="message-avatar" style={{ background: avatarUrl ? 'transparent' : gradient }}>
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={partnerName}
+                      onError={() => setImageError(true)}
+                    />
+                  ) : (
+                    <span>{initials}</span>
+                  )}
                 </div>
               )}
               <div className="message-bubble">
@@ -193,7 +234,7 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Fixed Input */}
       <div className="chat-input-container">
         <textarea
           className="chat-input"

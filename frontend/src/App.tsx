@@ -3,11 +3,27 @@ import './App.css'
 import Feed from './features/Feed'
 import Search from './features/Search'
 import Messages from './features/Messages'
+import { api } from './services/api'
+import { useEffect } from 'react'
+import { shortenPubkey, generateGradient, getInitials } from './utils/format'
 
 type Tab = 'home' | 'search' | 'messages' | 'profile';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
+  const [currentUser, setCurrentUser] = useState<{ pubkey: string; profile?: any } | null>(null);
+
+  useEffect(() => {
+    const fetchMe = async () => {
+      try {
+        const me = await api.getMe();
+        setCurrentUser(me);
+      } catch (err) {
+        console.error('Failed to fetch current user:', err);
+      }
+    };
+    fetchMe();
+  }, []);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -98,6 +114,36 @@ function App() {
             </li>
           </ul>
         </nav>
+
+        {currentUser && (
+          <div className="sidebar-footer">
+            <div className="user-profile">
+              <div
+                className="user-avatar"
+                style={{
+                  background: currentUser.profile?.picture ? 'transparent' : generateGradient(currentUser.pubkey)
+                }}
+              >
+                {currentUser.profile?.picture ? (
+                  <img src={currentUser.profile.picture} alt={currentUser.profile.name || 'Me'} />
+                ) : (
+                  <span>{getInitials(currentUser.profile?.display_name || currentUser.profile?.name || currentUser.pubkey)}</span>
+                )}
+              </div>
+              <div className="user-info">
+                <div className="user-name">{currentUser.profile?.display_name || currentUser.profile?.name || 'User'}</div>
+                <div className="user-handle">@{shortenPubkey(currentUser.pubkey)}</div>
+              </div>
+              <div className="user-more">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="1"></circle>
+                  <circle cx="19" cy="12" r="1"></circle>
+                  <circle cx="5" cy="12" r="1"></circle>
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
       </aside>
 
       <main className="main-content">
@@ -244,13 +290,95 @@ function App() {
           .sidebar-nav .label {
             display: none;
           }
+
+          .user-info, .user-more {
+            display: none;
+          }
+
+          .sidebar-footer {
+            padding: 12px 0;
+            display: flex;
+            justify-content: center;
+          }
           
+          .user-profile {
+            padding: 8px;
+            width: fit-content;
+          }
+        }
+
+        .sidebar-footer {
+          margin-top: auto;
+          padding: 12px 4px;
+        }
+
+        .user-profile {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          border-radius: 9999px;
+          cursor: pointer;
+          transition: background 0.2s;
+        }
+
+        .user-profile:hover {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .user-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-weight: 700;
+          font-size: 14px;
+          flex-shrink: 0;
+        }
+
+        .user-avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .user-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .user-name {
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .user-handle {
+          font-size: 15px;
+          color: var(--text-muted);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .user-more {
+          color: var(--text-primary);
+          display: flex;
+          align-items: center;
+        }
+  
           .sidebar-nav li {
             padding: 12px;
             justify-content: center;
           }
 
-          .main-content {
             margin-left: 80px;
           }
         }

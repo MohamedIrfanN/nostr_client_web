@@ -157,6 +157,13 @@ async def get_feed(limit: int | None = None, since_seconds: int | None = None):
     return {"count": len(events), "events": events}
 
 
+@app.get("/me")
+async def get_me():
+    _, my_pubkey = _get_keys()
+    profile = await fetch_profile_by_pubkey(my_pubkey)
+    return {"pubkey": my_pubkey, "profile": profile}
+
+
 @app.post("/publish")
 async def publish_note(payload: PublishIn):
     content = (payload.content or "").strip()

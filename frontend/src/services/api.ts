@@ -146,10 +146,19 @@ export const api = {
         });
 
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.detail || `Failed to post comment: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`Failed to post comment: ${errorText}`);
         }
 
+        return await response.json();
+    },
+
+    async getMe(): Promise<{ pubkey: string; profile?: any }> {
+        const response = await fetch(`${API_BASE_URL}/me`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to fetch current user: ${errorText}`);
+        }
         return await response.json();
     },
 

@@ -14,12 +14,33 @@ type Tab = 'home' | 'search' | 'messages' | 'profile';
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [currentUser, setCurrentUser] = useState<{ pubkey: string; profile?: any } | null>(null);
+  const [viewProfilePubkey, setViewProfilePubkey] = useState<string | null>(null);
+
+  // Expose navigation function globally (temporary but effective solution)
+  useEffect(() => {
+    (window as any).navigateToProfile = (pubkey: string) => {
+      setViewProfilePubkey(pubkey);
+      setActiveTab('profile');
+    };
+  }, []);
+
+  // When clicking "Profile" tab manually, show current user
+  const handleProfileTabClick = () => {
+    if (currentUser) {
+      setViewProfilePubkey(currentUser.pubkey);
+      setActiveTab('profile');
+    }
+  };
 
   useEffect(() => {
     const fetchMe = async () => {
       try {
         const me = await api.getMe();
         setCurrentUser(me);
+        // Default to showing own profile if none selected
+        if (!viewProfilePubkey) {
+          setViewProfilePubkey(me.pubkey);
+        }
       } catch (err) {
         console.error('Failed to fetch current user:', err);
       }
@@ -36,8 +57,10 @@ function App() {
       case 'messages':
         return <Messages />;
       case 'profile':
-        if (!currentUser) return <LoadingSpinner label="Identifying user..." size="large" />;
-        return <Profile pubkey={currentUser.pubkey} profile={currentUser.profile} />;
+        if (!viewProfilePubkey) return <LoadingSpinner label="Identifying user..." size="large" />;
+        // Retrieve profile if it's the current user, otherwise Profile component fetches it
+        const passedProfile = viewProfilePubkey === currentUser?.pubkey ? currentUser.profile : undefined;
+        return <Profile key={viewProfilePubkey} pubkey={viewProfilePubkey} profile={passedProfile} />;
       default:
         return <Feed />;
     }
@@ -100,7 +123,7 @@ function App() {
             </li>
             <li
               className={activeTab === 'profile' ? 'active' : ''}
-              onClick={() => setActiveTab('profile')}
+              onClick={handleProfileTabClick}
             >
               <span className="icon">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -115,7 +138,7 @@ function App() {
 
         {currentUser && (
           <div className="sidebar-footer">
-            <div className="user-profile">
+            <div className="user-profile" onClick={handleProfileTabClick} style={{ cursor: 'pointer' }}>
               <div
                 className="user-avatar"
                 style={{

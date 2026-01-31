@@ -71,39 +71,50 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const banner = profile?.banner;
     const avatar = profile?.picture;
 
+    const isLoadingProfile = loading && !profile;
+
     return (
         <div className="profile-page">
             <div className="profile-header-container">
-                <div className="profile-banner" style={{
-                    background: banner ? `url(${banner})` : 'var(--bg-card)',
+                <div className="profile-banner skeleton" style={{
+                    background: isLoadingProfile ? undefined : (banner ? `url(${banner})` : 'var(--bg-card)'),
                     backgroundSize: 'cover',
                     backgroundPosition: 'center'
                 }}>
-                    {!banner && <div className="banner-placeholder"></div>}
+                    {!banner && !isLoadingProfile && <div className="banner-placeholder"></div>}
                 </div>
 
                 <div className="profile-main-info">
                     <div className="profile-avatar-row">
-                        <div className="profile-avatar-large" style={{
-                            background: avatar ? 'transparent' : generateGradient(pubkey)
+                        <div className={`profile-avatar-large ${isLoadingProfile ? 'skeleton skeleton-avatar' : ''}`} style={{
+                            background: isLoadingProfile ? undefined : (avatar ? 'transparent' : generateGradient(pubkey))
                         }}>
-                            {avatar ? (
+                            {!isLoadingProfile && (avatar ? (
                                 <img src={avatar} alt={displayName} />
                             ) : (
                                 <span>{getInitials(displayName)}</span>
-                            )}
+                            ))}
                         </div>
                         <button className="edit-profile-btn glass">Edit profile</button>
                     </div>
 
                     <div className="profile-metadata">
-                        <h2 className="profile-display-name">{displayName}</h2>
-                        <div className="profile-handle">@{handle}</div>
-
-                        <div className="profile-bio">{bio}</div>
+                        {isLoadingProfile ? (
+                            <>
+                                <div className="skeleton skeleton-text large"></div>
+                                <div className="skeleton skeleton-text medium"></div>
+                                <div className="skeleton skeleton-text small" style={{ marginTop: 12 }}></div>
+                            </>
+                        ) : (
+                            <>
+                                <h2 className="profile-display-name">{displayName}</h2>
+                                <div className="profile-handle">@{handle}</div>
+                                <div className="profile-bio">{bio}</div>
+                            </>
+                        )}
 
                         <div className="profile-extra-info">
-                            {website && (
+                            {website && !isLoadingProfile && (
                                 <div className="info-item">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                         <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />

@@ -126,10 +126,19 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
   const gradient = generateGradient(event.pubkey);
   const initials = getInitials(profile?.display_name || profile?.name || event.pubkey);
 
+  const navigateToProfile = (e: React.MouseEvent, pubkey: string) => {
+    e.stopPropagation();
+    (window as any).navigateToProfile?.(pubkey);
+  };
+
   return (
     <div className="post-card">
       <div className="post-header">
-        <div className="post-avatar" style={{ background: avatarUrl ? 'transparent' : gradient }}>
+        <div
+          className="post-avatar"
+          style={{ background: avatarUrl ? 'transparent' : gradient, cursor: 'pointer' }}
+          onClick={(e) => navigateToProfile(e, event.pubkey)}
+        >
           {avatarUrl ? (
             <img
               src={avatarUrl}
@@ -142,13 +151,31 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         </div>
         <div className="post-meta">
           <div className="post-meta-top">
-            <span className="post-author" title={event.pubkey}>{displayName}</span>
-            <span className="post-pubkey">@{event.pubkey}</span>
+            <span
+              className="post-author"
+              title={event.pubkey}
+              style={{ cursor: 'pointer' }}
+              onClick={(e) => navigateToProfile(e, event.pubkey)}
+            >
+              {displayName}
+            </span>
+            <span
+              className="post-pubkey"
+              style={{ cursor: 'pointer' }}
+              onClick={(e) => navigateToProfile(e, event.pubkey)}
+            >
+              @{shortenPubkey(event.pubkey)}
+            </span>
             <span className="post-date">{relativeTime}</span>
           </div>
           {replyToPubkey && (
             <div className="post-reply-to">
-              Replying to <span className="reply-name">@{replyToProfile?.display_name || replyToProfile?.name || shortenPubkey(replyToPubkey)}</span>
+              Replying to <span
+                className="reply-name"
+                onClick={(e) => navigateToProfile(e, replyToPubkey)}
+              >
+                @{replyToProfile?.display_name || replyToProfile?.name || shortenPubkey(replyToPubkey)}
+              </span>
             </div>
           )}
         </div>

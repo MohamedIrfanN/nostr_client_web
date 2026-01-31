@@ -364,6 +364,7 @@
 .error-state button:hover {
   opacity: 0.9;
 }
+
 /* Loading Spinner */
 .spinner-container {
   display: flex;
@@ -390,6 +391,57 @@
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Skeleton Loading */
+.skeleton {
+  background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0.05) 25%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.05) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-text {
+  height: 16px;
+  margin-bottom: 8px;
+}
+
+.skeleton-text.large {
+  height: 24px;
+  width: 50%;
+}
+
+.skeleton-text.medium {
+  height: 16px;
+  width: 30%;
+}
+
+.skeleton-text.small {
+  height: 14px;
+  width: 80%;
+}
+
+.skeleton-avatar {
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.1);
 }

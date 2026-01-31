@@ -12,19 +12,32 @@ const Feed: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [isLive, setIsLive] = useState(false);
 
-    const fetchFeed = async () => {
-        setLoading(true);
+    const fetchFeed = async (silent = false) => {
+        if (!silent) {
+            setLoading(true);
+        }
         try {
             const feedEvents = await api.getFeed();
             feedCache.setEvents(feedEvents);
-            setEvents(feedEvents);
+            setEvents(feedCache.getEvents());
             setError(null);
         } catch (err) {
             console.error('Failed to fetch feed:', err);
             setError('Failed to load feed. Make sure the backend is running.');
         } finally {
-            setLoading(false);
+            if (!silent) {
+                setLoading(false);
+            }
         }
+    };
+
+    const handlePostCreated = async () => {
+        // Silently refresh the feed without showing loading state
+        await fetchFeed(true);
+
+        // Show a brief "New post!" indicator
+        setIsLive(true);
+        setTimeout(() => setIsLive(false), 2000);
     };
 
     useEffect(() => {
@@ -71,9 +84,9 @@ const Feed: React.FC = () => {
                 </div>
             )}
 
-            <CreatePost onPostCreated={fetchFeed} />
+            <CreatePost onPostCreated={handlePostCreated} />
 
-            {loading && (
+            {loading && events.length === 0 && (
                 <div className="loading-state">
                     <span>Loading nodes...</span>
                 </div>
@@ -82,7 +95,7 @@ const Feed: React.FC = () => {
             {error && (
                 <div className="error-card glass">
                     <p>{error}</p>
-                    <button onClick={fetchFeed}>Retry</button>
+                    <button onClick={() => fetchFeed()}>Retry</button>
                 </div>
             )}
 

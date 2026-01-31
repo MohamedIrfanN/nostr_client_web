@@ -11,11 +11,13 @@ from .nostr_client.events import (
     build_signed_text_note,
     build_signed_contacts_event,
     build_signed_dm,
+    build_signed_reaction,
+    build_signed_comment,
 )
 from .nostr_client.publish import publish_to_relays
 from .nostr_client.contacts import fetch_following_all_relays, apply_follow, apply_unfollow
 from .nostr_client.profile_search import fetch_profile_by_pubkey, search_profiles_by_name
-from .nostr_client.dm_subscribe import fetch_dm_inbox_7d, fetch_dm_history_7d
+from .nostr_client.dm_subscribe import fetch_dm_inbox_7d, fetch_dm_history_7d, _decrypt, _extract_partner
 from .nostr_client.mute_list import fetch_published_mute_set
 from .nostr_client.feed import fetch_feed_events
 from .nostr_client.relay_manager import RelayManager
@@ -44,6 +46,17 @@ class FollowIn(BaseModel):
 class DMMessageIn(BaseModel):
     partner_pubkey: str
     message: str
+
+
+class ReactIn(BaseModel):
+    event_id: str
+    reaction: str = "+"
+
+
+class CommentIn(BaseModel):
+    event_id: str
+    event_pubkey: str
+    content: str
 
 
 def _get_keys():
@@ -76,6 +89,18 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
                 if not eid or eid in seen:
                     continue
                 seen.add(eid)
+                
+                # If it's a DM, try to decrypt it and attach partner info
+                if event_type == "dm" and ev.get("kind") == 4:
+                    privkey, my_pubkey = _get_keys()
+                    direction, partner = _extract_partner(my_pubkey, ev)
+                    decrypted_text = _decrypt(privkey, partner, ev.get("content") or "")
+                    
+                    # Add formatted fields for the frontend
+                    ev["content"] = decrypted_text
+                    ev["from_me"] = direction == "OUT"
+                    ev["partner_pubkey"] = partner
+
                 await queue.put({"type": event_type, "event": ev})
     except asyncio.CancelledError:
         raise
@@ -140,6 +165,56 @@ async def publish_note(payload: PublishIn):
 
     privkey, _ = _get_keys()
     eid, ev = build_signed_text_note(privkey, content)
+    await publish_to_relays(eid, ev)
+    return {"event_id": eid}
+
+
+@app.post("/react")
+async def react_to_post(payload: ReactIn):
+    event_id = (payload.event_id or "").strip()
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id cannot be empty")
+    
+    reaction = (payload.reaction or "+").strip() or "+"
+    privkey, my_pubkey = _get_keys()
+    
+    # Build and publish the reaction event
+    eid, ev = build_signed_reaction(
+        privkey=privkey,
+        target_event_id=event_id,
+        target_pubkey=None,  # We don't have the original author's pubkey
+        reaction=reaction
+    )
+    await publish_to_relays(eid, ev)
+    return {"event_id": eid}
+
+
+@app.post("/comment")
+async def post_comment(payload: CommentIn):
+    event_id = (payload.event_id or "").strip()
+    event_pubkey = (payload.event_pubkey or "").strip()
+    content = (payload.content or "").strip()
+    
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id cannot be empty")
+    if not content:
+        raise HTTPException(status_code=400, detail="content cannot be empty")
+    
+    privkey, _ = _get_keys()
+    
+    # Build the target event dict for build_signed_comment
+    target_event = {
+        "id": event_id,
+        "pubkey": event_pubkey,
+        "tags": []  # We don't have the full event, but build_signed_comment will handle it
+    }
+    
+    # Build and publish the comment
+    eid, ev = build_signed_comment(
+        privkey=privkey,
+        target_event=target_event,
+        content=content
+    )
     await publish_to_relays(eid, ev)
     return {"event_id": eid}
 

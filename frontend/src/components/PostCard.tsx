@@ -3,6 +3,7 @@ import type { NostrEvent } from '../services/api';
 import { api } from '../services/api';
 import { formatRelativeTime, generateGradient, getInitials, shortenPubkey } from '../utils/format';
 import { getProfileWithCache } from '../services/profileCache';
+import CommentModal from './CommentModal';
 
 interface PostCardProps {
   event: NostrEvent;
@@ -15,9 +16,33 @@ interface ProfileData {
   about?: string;
 }
 
+// LocalStorage key for liked posts
+const LIKED_POSTS_KEY = 'nostr_liked_posts';
+
+// Helper functions for managing liked posts in localStorage
+const getLikedPosts = (): Set<string> => {
+  try {
+    const stored = localStorage.getItem(LIKED_POSTS_KEY);
+    return stored ? new Set(JSON.parse(stored)) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+
+const saveLikedPosts = (likedPosts: Set<string>) => {
+  try {
+    localStorage.setItem(LIKED_POSTS_KEY, JSON.stringify(Array.from(likedPosts)));
+  } catch (err) {
+    console.error('Failed to save liked posts:', err);
+  }
+};
+
 const PostCard: React.FC<PostCardProps> = ({ event }) => {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [imageError, setImageError] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
+  const [isLiking, setIsLiking] = useState(false);
+  const [showCommentModal, setShowCommentModal] = useState(false);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -32,7 +57,45 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
       }
     };
     fetchProfile();
-  }, [event.pubkey]);
+
+    // Check if this post is already liked
+    const likedPosts = getLikedPosts();
+    setIsLiked(likedPosts.has(event.id));
+  }, [event.pubkey, event.id]);
+
+  const handleLike = async () => {
+    if (isLiking) return;
+
+    const newLikedState = !isLiked;
+    setIsLiking(true);
+    setIsLiked(newLikedState); // Optimistic update
+
+    // Update localStorage
+    const likedPosts = getLikedPosts();
+    if (newLikedState) {
+      likedPosts.add(event.id);
+    } else {
+      likedPosts.delete(event.id);
+    }
+    saveLikedPosts(likedPosts);
+
+    try {
+      await api.reactToPost(event.id, '+');
+    } catch (err) {
+      console.error('Failed to react to post:', err);
+      // Revert on error
+      setIsLiked(isLiked);
+      const likedPosts = getLikedPosts();
+      if (isLiked) {
+        likedPosts.add(event.id);
+      } else {
+        likedPosts.delete(event.id);
+      }
+      saveLikedPosts(likedPosts);
+    } finally {
+      setIsLiking(false);
+    }
+  };
 
   const displayName = profile?.display_name || profile?.name || shortenPubkey(event.pubkey);
   const avatarUrl = profile?.picture && !imageError ? profile.picture : null;
@@ -66,13 +129,12 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
       </div>
 
       <div className="post-actions">
-        <button className="action-btn">
+        <button className="action-btn" onClick={() => setShowCommentModal(true)}>
           <span className="action-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
           </span>
-          <span className="action-count">0</span>
         </button>
         <button className="action-btn">
           <span className="action-icon">
@@ -83,15 +145,17 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
               <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
             </svg>
           </span>
-          <span className="action-count">0</span>
         </button>
-        <button className="action-btn">
+        <button
+          className={`action-btn ${isLiked ? 'liked' : ''}`}
+          onClick={handleLike}
+          disabled={isLiking}
+        >
           <span className="action-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill={isLiked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
             </svg>
           </span>
-          <span className="action-count">0</span>
         </button>
         <button className="action-btn">
           <span className="action-icon">
@@ -99,7 +163,6 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
               <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
             </svg>
           </span>
-          <span className="action-count">0</span>
         </button>
         <button className="action-btn share-btn">
           <span className="action-icon">
@@ -111,6 +174,18 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           </span>
         </button>
       </div>
+
+      {showCommentModal && (
+        <CommentModal
+          post={event}
+          authorName={displayName}
+          authorAvatar={avatarUrl || undefined}
+          onClose={() => setShowCommentModal(false)}
+          onCommentPosted={() => {
+            // Optionally refresh feed or show success message
+          }}
+        />
+      )}
 
       <style>{`
         .post-card {
@@ -196,7 +271,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
 
         .post-actions {
           display: flex;
-          gap: 4px;
+          gap: 16px;
           padding-left: 52px;
         }
 
@@ -204,7 +279,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 6px 12px;
+          padding: 8px 12px;
           background: none;
           border: none;
           color: var(--text-muted);
@@ -219,6 +294,19 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           color: var(--text-primary);
         }
 
+        .action-btn.liked {
+          color: #f91880;
+        }
+
+        .action-btn.liked:hover {
+          color: #ff1a8c;
+        }
+
+        .action-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
         .action-icon {
           display: flex;
           align-items: center;
@@ -227,11 +315,6 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
 
         .action-icon svg {
           display: block;
-        }
-
-        .action-count {
-          font-size: 13px;
-          font-weight: 500;
         }
 
         .share-btn {

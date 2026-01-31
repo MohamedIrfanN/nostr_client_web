@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
 import { formatRelativeTime, getInitials, generateGradient } from '../utils/format';
 import { getProfileWithCache } from '../services/profileCache';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 interface ChatViewProps {
   partnerPubkey: string;
@@ -200,7 +201,7 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
       {/* Scrollable Messages */}
       <div className="chat-messages">
         {loading ? (
-          <div className="chat-loading">Loading messages...</div>
+          <LoadingSpinner label="Loading conversation history..." size="large" />
         ) : error ? (
           <div className="chat-error">{error}</div>
         ) : messages.length === 0 ? (

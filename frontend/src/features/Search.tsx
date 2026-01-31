@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
 import { generateGradient, getInitials } from '../utils/format';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 const Search: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -51,12 +52,16 @@ const Search: React.FC = () => {
           className="search-input glass"
         />
         <button type="submit" disabled={loading} className="search-btn">
-          {loading ? '...' : 'Search'}
+          {loading ? <LoadingSpinner size="small" color="white" padding="0" /> : 'Search'}
         </button>
       </form>
 
       <div className="search-results">
-        {loading && <div className="loading-results">Searching...</div>}
+        {loading && (
+          <div className="loading-results">
+            <LoadingSpinner label="Searching for profiles..." size="medium" />
+          </div>
+        )}
 
         {!loading && hasSearched && results.length === 0 && (
           <div className="no-results">No profiles found for "{query}"</div>

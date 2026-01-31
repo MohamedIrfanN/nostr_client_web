@@ -3,6 +3,7 @@ import { api } from '../services/api';
 import { getProfileWithCache } from '../services/profileCache';
 import { generateGradient, getInitials, formatRelativeTime } from '../utils/format';
 import ChatView from './ChatView';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 interface SelectedChat {
   pubkey: string;
@@ -77,7 +78,7 @@ const Messages: React.FC = () => {
   return (
     <div className="messages-view">
       {loading ? (
-        <div className="loading">Loading messages...</div>
+        <LoadingSpinner label="Loading your conversations..." size="large" />
       ) : error ? (
         <div className="error-state card glass">
           <h3>⚠️ Error</h3>

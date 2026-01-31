@@ -5,6 +5,7 @@ import { wsService } from '../services/websocket';
 import PostCard from '../components/PostCard';
 import CreatePost from '../components/CreatePost';
 import { feedCache } from '../services/feedCache';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 const Feed: React.FC = () => {
     const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
@@ -88,7 +89,7 @@ const Feed: React.FC = () => {
 
             {loading && events.length === 0 && (
                 <div className="loading-state">
-                    <span>Loading nodes...</span>
+                    <LoadingSpinner label="Connecting to relays..." size="large" />
                 </div>
             )}
 

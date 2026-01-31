@@ -119,6 +119,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         </div>
         <div className="post-meta">
           <span className="post-author" title={event.pubkey}>{displayName}</span>
+          <span className="post-pubkey">@{shortenPubkey(event.pubkey)}</span>
           <span className="post-date">{relativeTime}</span>
           <button className="post-menu">⋯</button>
         </div>
@@ -235,6 +236,12 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           font-weight: 600;
           font-size: 15px;
           color: var(--text-primary);
+        }
+
+        .post-pubkey {
+          font-size: 14px;
+          color: #6b7280;
+          font-weight: 400;
         }
 
         .post-date {

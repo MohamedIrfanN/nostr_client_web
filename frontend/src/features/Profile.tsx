@@ -77,7 +77,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         <div className="profile-page">
             <div className="profile-header-container">
                 <div className="profile-banner skeleton" style={{
-                    background: isLoadingProfile ? undefined : (banner ? `url(${banner})` : 'var(--bg-card)'),
+                    background: isLoadingProfile ? undefined : (banner ? `url(${banner})` : generateGradient(pubkey)),
                     backgroundSize: 'cover',
                     backgroundPosition: 'center'
                 }}>

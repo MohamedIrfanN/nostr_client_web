@@ -5,27 +5,55 @@
   min-height: 100vh;
 }
 
+/* Ensure parent can be a reference point */
+.main-content {
+  position: relative;
+}
+
 /* ChatView Styles */
 .chat-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% + 40px);
+  /* 100% + 2 * 20px padding */
+  height: 100vh;
+  margin: -20px;
+  /* Undo parent padding */
+  z-index: 100;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: var(--bg-primary);
+  background: var(--bg-color);
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+
+  /* On mobile, main-content might behave differently, but absolute works if parent relative */
+  /* If main-content has no margins on mobile, logic mostly holds */
+  .chat-view {
+    left: 0;
+    z-index: 1000;
+    /* Higher than sidebar on mobile */
+  }
+}
+
+.chat-header {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
-}
-
-.chat-header {
+  z-index: 20;
+  height: 70px;
+  /* Fixed height for consistent layout */
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  flex-shrink: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(13, 13, 13, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .back-btn {
@@ -84,10 +112,12 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px;
+  padding: 90px 20px 20px 20px;
+  /* Top padding > header height (70px) */
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background: var(--bg-color);
 }
 
 .chat-loading,
@@ -180,9 +210,13 @@
   display: flex;
   gap: 12px;
   padding: 16px 20px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-primary);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(13, 13, 13, 0.95);
+  /* Slightly opaque to hide scrolling text */
+  backdrop-filter: blur(10px);
   flex-shrink: 0;
+  position: relative;
+  z-index: 20;
 }
 
 .chat-input {
@@ -236,11 +270,16 @@
 /* Messages Inbox Styles */
 .messages-view {
   width: 100%;
-  height: 100vh;
-  overflow-y: auto;
+  max-width: 100%;
+  /* Ensure constraints */
+  min-height: 100vh;
+  overflow-x: hidden;
+  /* Prevent horizontal scroll */
 }
 
 .inbox-list {
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -292,6 +331,9 @@
 .inbox-details {
   flex: 1;
   min-width: 0;
+  /* Standard fix */
+  width: 0;
+  /* Stronger fix for nested flex truncation */
   display: flex;
   flex-direction: column;
   gap: 4px;

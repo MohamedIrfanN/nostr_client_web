@@ -9,6 +9,7 @@ export interface NostrEvent {
     content: string;
     sig: string;
     partner_pubkey?: string;
+    from_me?: boolean;
 }
 
 export interface ApiResponse<T> {

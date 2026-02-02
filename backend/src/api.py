@@ -452,7 +452,7 @@ async def ws_user_feed(websocket: WebSocket, pubkey: str, since: int | None = No
 
 
 @app.websocket("/ws/dm")
-async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | None = None):
+async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | None = None, partner_pubkey: str | None = None):
     _, my_pubkey = _get_keys()
     
     # Default to 30 days of DMs if not specified
@@ -462,9 +462,20 @@ async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | Non
     else:
         since = int(since)
 
-    # Build filter
+    # Base filters
     filter_recv = {"kinds": [4], "#p": [my_pubkey], "since": since}
     filter_sent = {"kinds": [4], "authors": [my_pubkey], "since": since}
+    
+    # If specific partner requested, narrow filters
+    if partner_pubkey:
+        try:
+            partner = normalize_pubkey_input(partner_pubkey)
+            # Messages sent BY partner TO me
+            filter_recv["authors"] = [partner]
+            # Messages sent BY me TO partner
+            filter_sent["#p"] = [partner]
+        except:
+            pass
     
     if limit is not None:
         filter_recv["limit"] = int(limit)

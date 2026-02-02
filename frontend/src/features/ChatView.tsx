@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
+import { wsService } from '../services/websocket';
 import { formatRelativeTime, getInitials, generateGradient } from '../utils/format';
 import { getProfileWithCache } from '../services/profileCache';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -32,7 +33,6 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [imageError, setImageError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // Auto-scroll to bottom
   const scrollToBottom = () => {
@@ -42,6 +42,15 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Lock body scroll and reset position on mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
 
   // Fetch profile picture
   useEffect(() => {
@@ -58,72 +67,51 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
     fetchProfile();
   }, [partnerPubkey]);
 
-  // Fetch message history
+  // WebSocket Streaming for Messages
   useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        setLoading(true);
-        const history = await api.getDMHistory(partnerPubkey);
-        setMessages(history);
-        setError(null);
-      } catch (err) {
-        console.error('Failed to fetch DM history:', err);
-        setError('Failed to load messages');
-        setMessages([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+    setLoading(true);
+    setMessages([]);
+    setError(null);
 
-    fetchHistory();
-  }, [partnerPubkey]);
+    const cleanup = wsService.connect(
+      `dm?partner_pubkey=${partnerPubkey}&limit=50`,
+      (message) => {
+        if (message.type === 'dm' && message.event) {
+          const ev = message.event;
 
-  // WebSocket for real-time messages
-  useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/ws/dm?partner_pubkey=${partnerPubkey}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('DM WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'dm' && data.event) {
-          const ev = data.event;
-
-          // Filter messages for this specific partner
-          if (ev.partner_pubkey === partnerPubkey || (ev.from_me && ev.tags?.some((t: any) => t[0] === 'p' && t[1] === partnerPubkey))) {
+          // Verify it belongs to this chat (redundant if backend filters work, but safe)
+          if (ev.partner_pubkey === partnerPubkey) {
             const incomingMessage: Message = {
               id: ev.id,
               content: ev.content,
               created_at: ev.created_at,
-              from_me: ev.from_me,
+              from_me: ev.from_me || false,
             };
 
-            setMessages((prev) => {
-              // Avoid duplicates (e.g. echo from relay that might arrive before REST response)
+            setMessages(prev => {
               if (prev.some(m => m.id === incomingMessage.id)) return prev;
-              return [...prev, incomingMessage];
+              // Chat: Sort Oldest -> Newest
+              return [...prev, incomingMessage].sort((a, b) => a.created_at - b.created_at);
             });
+            setLoading(false);
           }
         }
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err);
+        if (message.type === 'eose') {
+          setLoading(false);
+        }
+      },
+      (err) => {
+        console.error('Chat stream error:', err);
+        setLoading(false);
       }
-    };
+    );
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-      console.log('DM WebSocket disconnected');
-    };
+    // Timeout safety
+    const timeout = setTimeout(() => setLoading(false), 2000);
 
     return () => {
-      ws.close();
+      cleanup();
+      clearTimeout(timeout);
     };
   }, [partnerPubkey]);
 
@@ -194,7 +182,6 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
         </div>
         <div className="chat-partner-info">
           <div className="chat-partner-name">{partnerName}</div>
-          <div className="chat-partner-status">Active</div>
         </div>
       </div>
 

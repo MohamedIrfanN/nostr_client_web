@@ -8,6 +8,7 @@ import LoadingSpinner from './components/LoadingSpinner'
 import { api } from './services/api'
 import { useEffect } from 'react'
 import { shortenPubkey, generateGradient, getInitials } from './utils/format'
+import { setCurrentUser as setCacheCurrentUser } from './services/profileCache'
 
 type Tab = 'home' | 'search' | 'messages' | 'profile';
 
@@ -37,6 +38,7 @@ function App() {
       try {
         const me = await api.getMe();
         setCurrentUser(me);
+        setCacheCurrentUser(me); // Populate global synchronous cache
         // Default to showing own profile if none selected
         if (!viewProfilePubkey) {
           setViewProfilePubkey(me.pubkey);

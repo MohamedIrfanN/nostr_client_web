@@ -93,3 +93,13 @@ export async function prefetchProfiles(
         uncachedPubkeys.map(pubkey => getProfileWithCache(pubkey, fetchFn))
     );
 }
+// Current User Session Cache
+let currentUser: { pubkey: string; profile?: ProfileData } | null = null;
+
+export function getCurrentUser() {
+    return currentUser;
+}
+
+export function setCurrentUser(user: { pubkey: string; profile?: ProfileData } | null) {
+    currentUser = user;
+}

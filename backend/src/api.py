@@ -199,16 +199,20 @@ async def get_user_stats(pubkey: str):
         norm_pubkey = normalize_pubkey_input(pubkey)
     except:
         norm_pubkey = pubkey
+
+    _, my_pubkey = _get_keys()
         
-    # Run following and followers stats in parallel
-    following, followers = await asyncio.gather(
+    # Run following, followers, and MY following (to check relationship) in parallel
+    following, followers, my_following = await asyncio.gather(
         fetch_following_all_relays(norm_pubkey),
-        fetch_followers_all_relays(norm_pubkey)
+        fetch_followers_all_relays(norm_pubkey),
+        fetch_following_all_relays(my_pubkey)
     )
     
     return {
         "following_count": len(following),
-        "followers_count": len(followers)
+        "followers_count": len(followers),
+        "is_following": norm_pubkey in my_following
     }
 
 
@@ -512,3 +516,155 @@ async def ws_notify(websocket: WebSocket):
         ]
 
     await _run_ws(websocket, reqs_by_relay, event_type="notify")
+
+
+@app.websocket("/ws/relationship")
+async def ws_relationship(websocket: WebSocket, target_pubkey: str):
+    await websocket.accept()
+    _, my_pubkey = _get_keys()
+    
+    try:
+        norm_target = normalize_pubkey_input(target_pubkey)
+    except:
+        norm_target = target_pubkey
+
+    # Subscribe to own contact list (Kind 3) to track changes
+    reqs_by_relay: dict[str, list[list]] = {}
+    for relay in RELAYS:
+        sub_id = relay_manager.new_sub_id()
+        reqs_by_relay[relay] = [
+            relay_manager.make_req(
+                sub_id,
+                {"authors": [my_pubkey], "kinds": [3], "limit": 1}
+            )
+        ]
+
+    queue: asyncio.Queue = asyncio.Queue()
+    seen: set[str] = set()
+    
+    tasks = [
+        asyncio.create_task(_relay_stream_task(relay, reqs, queue, seen, "contact_list"))
+        for relay, reqs in reqs_by_relay.items()
+    ]
+    
+    # Keep alive task
+    keepalive = asyncio.create_task(_ws_keepalive(websocket))
+
+    try:
+        while True:
+            # Wait for event or connection close
+            msg = await queue.get()
+            
+            if msg.get("type") == "contact_list":
+                event = msg.get("event")
+                if not event:
+                    continue
+                    
+                # Parse tags to check relationship
+                tags = event.get("tags", [])
+                is_following = any(len(t) >= 2 and t[0] == "p" and t[1] == norm_target for t in tags)
+                
+                await websocket.send_json({
+                    "type": "relationship",
+                    "is_following": is_following,
+                    "target_pubkey": norm_target
+                })
+                
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WS Relationship error: {e}")
+    finally:
+        for t in tasks:
+            t.cancel()
+        keepalive.cancel()
+
+
+@app.websocket("/ws/stats/{pubkey}")
+async def ws_stats(websocket: WebSocket, pubkey: str):
+    await websocket.accept()
+    
+    try:
+        norm_pubkey = normalize_pubkey_input(pubkey)
+    except:
+        norm_pubkey = pubkey
+
+    # Subscribe to own contact list (Kind 3) for "Following" count
+    # Subscribe to others' contact lists (Kind 3) referencing me for "Followers" count
+    reqs_by_relay: dict[str, list[list]] = {}
+    
+    for relay in RELAYS:
+        sub_id = relay_manager.new_sub_id()
+        reqs_by_relay[relay] = [
+            relay_manager.make_req(
+                sub_id,
+                # Filter 1: My Following (Kind 3 from me)
+                {"authors": [norm_pubkey], "kinds": [3], "limit": 1},
+                # Filter 2: My Followers (Kind 3 tagging me)
+                # Note: This can be heavy, but we want streams
+                {"kinds": [3], "#p": [norm_pubkey]}
+            )
+        ]
+
+    queue: asyncio.Queue = asyncio.Queue()
+    seen: set[str] = set()
+    
+    tasks = [
+        asyncio.create_task(_relay_stream_task(relay, reqs, queue, seen, "stats_event"))
+        for relay, reqs in reqs_by_relay.items()
+    ]
+    
+    keepalive = asyncio.create_task(_ws_keepalive(websocket))
+    
+    known_followers = set()
+    following_count = 0
+    followers_count = 0
+    
+    # Send initial zero counts
+    await websocket.send_json({
+        "type": "stats",
+        "following": 0,
+        "followers": 0
+    })
+
+    try:
+        while True:
+            msg = await queue.get()
+            
+            if msg.get("type") == "stats_event":
+                event = msg.get("event")
+                if not event:
+                    continue
+                
+                # Check if it's the user's own contact list (Following Count)
+                if event["pubkey"] == norm_pubkey:
+                     # Count 'p' tags
+                    tags = event.get("tags", [])
+                    new_following = sum(1 for t in tags if len(t) >= 2 and t[0] == "p")
+                    if new_following != following_count:
+                        following_count = new_following
+                        await websocket.send_json({
+                            "type": "stats",
+                            "following": following_count,
+                            "followers": followers_count
+                        })
+                
+                # Check if it's someone else (Follower)
+                else:
+                    if event["pubkey"] not in known_followers:
+                        known_followers.add(event["pubkey"])
+                        followers_count = len(known_followers)
+                        await websocket.send_json({
+                            "type": "stats",
+                            "following": following_count,
+                            "followers": followers_count
+                        })
+                
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WS Stats error: {e}")
+    finally:
+        for t in tasks:
+            t.cancel()
+        keepalive.cancel()

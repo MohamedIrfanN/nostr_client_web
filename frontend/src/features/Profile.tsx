@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import type { NostrEvent } from '../services/api';
-import { getProfileWithCache, getCachedUserPosts, cacheUserPosts } from '../services/profileCache';
+import { getProfileWithCache, getCachedUserPosts, cacheUserPosts, getCurrentUser } from '../services/profileCache';
 import { wsService } from '../services/websocket';
 import type { WebSocketMessage } from '../services/websocket';
 import PostCard from '../components/PostCard';
@@ -22,14 +22,33 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
     const [profile, setProfile] = useState(initialProfile);
     const [stats, setStats] = useState<{ following_count: number; followers_count: number } | null>(null);
+    const [relationshipStatus, setRelationshipStatus] = useState<'loading' | 'ready'>('loading');
+    const [isFollowing, setIsFollowing] = useState<boolean>(false);
+
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
     const [copied, setCopied] = useState(false);
+    const [currentUserPubkey, setCurrentUserPubkey] = useState<string | null>(() => {
+        return getCurrentUser()?.pubkey || null;
+    });
+    const [isHoveringFollow, setIsHoveringFollow] = useState(false);
+    const [followLoading, setFollowLoading] = useState(false);
 
     // Initial Profile Metadata Load
     useEffect(() => {
         let isMounted = true;
+
+        // Reset state on profile change
+        setRelationshipStatus('loading');
+
         const loadProfile = async () => {
+            // Get current user pubkey to verify if it's "Me"
+            if (!currentUserPubkey) {
+                api.getMe().then(me => {
+                    if (isMounted) setCurrentUserPubkey(me.pubkey);
+                }).catch(console.error);
+            }
+
             // If passed as prop, use it
             if (initialProfile) {
                 setIsProfileLoading(false);
@@ -50,20 +69,85 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         };
         loadProfile();
 
-        // 2. Fetch Stats Asynchronously (Non-blocking)
-        const loadStats = async () => {
-            try {
-                const s = await api.getProfileStats(pubkey);
-                if (isMounted) setStats(s);
-            } catch (e) {
-                console.error('Stats fetch error:', e);
+        // Connect to Stats WebSocket for progressive loading
+        const cleanupStats = wsService.connect(
+            `stats/${pubkey}`,
+            (message: WebSocketMessage) => {
+                if (message.type === 'stats') {
+                    setStats(prev => ({
+                        following_count: message.following ?? prev?.following_count ?? 0,
+                        followers_count: message.followers ?? prev?.followers_count ?? 0
+                    }));
+                }
             }
-        };
-        // Delay slightly to prioritize UI rendering
-        setTimeout(loadStats, 100);
+        );
 
-        return () => { isMounted = false; };
+        return () => {
+            isMounted = false;
+            cleanupStats();
+        };
     }, [pubkey, initialProfile]);
+
+    // WebSocket for Relationship Status
+    useEffect(() => {
+        // If viewing own profile, no need to check relationship
+        if (currentUserPubkey === pubkey) {
+            setRelationshipStatus('ready');
+            return;
+        }
+
+        const cleanup = wsService.connect(
+            `relationship?target_pubkey=${pubkey}`,
+            (message: WebSocketMessage) => {
+                if (message.type === 'relationship') {
+                    if (typeof message.is_following === 'boolean') {
+                        setIsFollowing(message.is_following);
+                        setRelationshipStatus('ready');
+                    }
+                }
+            }
+        );
+
+        return cleanup;
+    }, [pubkey, currentUserPubkey]);
+
+    const handleFollow = async () => {
+        if (followLoading) return;
+        setFollowLoading(true);
+        // Optimistic update
+        setIsFollowing(true);
+        setStats(prev => prev ? { ...prev, followers_count: prev.followers_count + 1 } : null);
+
+        try {
+            await api.followUser(pubkey);
+        } catch (err) {
+            console.error('Follow failed', err);
+            // Revert
+            setIsFollowing(false);
+            setStats(prev => prev ? { ...prev, followers_count: prev.followers_count - 1 } : null);
+        } finally {
+            setFollowLoading(false);
+        }
+    };
+
+    const handleUnfollow = async () => {
+        if (followLoading) return;
+        setFollowLoading(true);
+        // Optimistic update
+        setIsFollowing(false);
+        setStats(prev => prev ? { ...prev, followers_count: prev.followers_count - 1 } : null);
+
+        try {
+            await api.unfollowUser(pubkey);
+        } catch (err) {
+            console.error('Unfollow failed', err);
+            // Revert
+            setIsFollowing(true);
+            setStats(prev => prev ? { ...prev, followers_count: prev.followers_count + 1 } : null);
+        } finally {
+            setFollowLoading(false);
+        }
+    };
 
     // WebSocket Stream for Posts
     useEffect(() => {
@@ -131,6 +215,49 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     // Use specific loading state for header
     const isLoadingProfile = isProfileLoading && !profile;
 
+    const isMe = currentUserPubkey === pubkey;
+
+    // Render Follow Button Logic
+    const renderActionButton = () => {
+        if (isLoadingProfile || !currentUserPubkey) return null; // Skeleton or loading
+
+        if (isMe) {
+            return <button className="edit-profile-btn glass">Edit profile</button>;
+        }
+
+        if (relationshipStatus === 'loading') {
+            return (
+                <button className="edit-profile-btn glass" disabled>
+                    Checking...
+                </button>
+            );
+        }
+
+        if (isFollowing) {
+            return (
+                <button
+                    className={`edit-profile-btn glass following-btn ${isHoveringFollow ? 'unfollow-danger' : ''}`}
+                    onClick={handleUnfollow}
+                    onMouseEnter={() => setIsHoveringFollow(true)}
+                    onMouseLeave={() => setIsHoveringFollow(false)}
+                    disabled={followLoading}
+                >
+                    {isHoveringFollow ? 'Unfollow' : 'Following'}
+                </button>
+            );
+        }
+
+        return (
+            <button
+                className="edit-profile-btn glass follow-primary"
+                onClick={handleFollow}
+                disabled={followLoading}
+            >
+                Follow
+            </button>
+        );
+    };
+
     return (
         <div className="profile-page">
             <div className="profile-header-container">
@@ -153,7 +280,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                                 <span>{getInitials(displayName)}</span>
                             ))}
                         </div>
-                        <button className="edit-profile-btn glass">Edit profile</button>
+                        {renderActionButton()}
                     </div>
 
                     <div className="profile-metadata">
@@ -335,10 +462,36 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             color: var(--text-primary);
             cursor: pointer;
             transition: all 0.2s;
+            height: 40px;
+            min-width: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
         }
 
         .edit-profile-btn:hover {
             background: rgba(255, 255, 255, 0.1);
+        }
+
+        .follow-primary {
+            background: white;
+            color: black;
+            border: none;
+        }
+
+        .follow-primary:hover {
+            background: #e0e0e0;
+        }
+
+        .following-btn {
+            /* Inherits glass style */
+        }
+
+        .unfollow-danger {
+            border-color: #ef4444; /* red-500 */
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
         }
 
         .profile-metadata {
@@ -392,6 +545,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
         .stat strong {
             color: var(--text-primary);
+            margin-right: 4px;
         }
 
         .stat span {

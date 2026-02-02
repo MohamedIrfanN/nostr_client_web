@@ -164,6 +164,15 @@ export const api = {
         return await response.json();
     },
 
+    async getMyFollowing(): Promise<string[]> {
+        const response = await fetch(`${API_BASE_URL}/me/following`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch following list');
+        }
+        const data = await response.json();
+        return data.following || [];
+    },
+
     async getUserPosts(pubkey: string): Promise<NostrEvent[]> {
         const response = await fetch(`${API_BASE_URL}/users/${pubkey}/posts`);
         if (!response.ok) {

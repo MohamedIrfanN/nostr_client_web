@@ -183,6 +183,13 @@ async def get_me():
     return {"pubkey": my_pubkey, "profile": profile}
 
 
+@app.get("/me/following")
+async def get_my_following():
+    _, my_pubkey = _get_keys()
+    following = await fetch_following_all_relays(my_pubkey)
+    return {"following": list(following)}
+
+
 @app.get("/users/{pubkey}/posts")
 async def get_user_posts(pubkey: str, limit: int | None = None):
     try:

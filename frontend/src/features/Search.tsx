@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { generateGradient, getInitials, formatPubkey } from '../utils/format';
+import { getCurrentUser } from '../services/profileCache';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 const Search: React.FC = () => {
@@ -10,6 +11,21 @@ const Search: React.FC = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
 
+  const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
+  const [hoveringUnfollow, setHoveringUnfollow] = useState<string | null>(null);
+
+  const currentUser = getCurrentUser();
+  const myPubkey = currentUser?.pubkey;
+
+  // Fetch initial following list
+  useEffect(() => {
+    if (myPubkey) {
+      api.getMyFollowing().then(list => {
+        setFollowingSet(new Set(list));
+      }).catch(err => console.error("Failed to fetch following list", err));
+    }
+  }, [myPubkey]);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -17,8 +33,6 @@ const Search: React.FC = () => {
     setHasSearched(true);
     try {
       const response = await api.searchUsers(query);
-      // Backend returns either { profile: {...} } for pubkey search
-      // or { results: [...] } for name search
       if (response.profile) {
         setResults(response.profile ? [response.profile] : []);
       } else if (response.results) {
@@ -38,6 +52,36 @@ const Search: React.FC = () => {
     setImageErrors(prev => new Set(prev).add(pubkey));
   };
 
+  const handleFollow = async (pubkey: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFollowingSet(prev => new Set(prev).add(pubkey));
+    try {
+      await api.followUser(pubkey);
+    } catch (err) {
+      console.error('Follow failed', err);
+      setFollowingSet(prev => {
+        const next = new Set(prev);
+        next.delete(pubkey);
+        return next;
+      });
+    }
+  };
+
+  const handleUnfollow = async (pubkey: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFollowingSet(prev => {
+      const next = new Set(prev);
+      next.delete(pubkey);
+      return next;
+    });
+    try {
+      await api.unfollowUser(pubkey);
+    } catch (err) {
+      console.error('Unfollow failed', err);
+      setFollowingSet(prev => new Set(prev).add(pubkey));
+    }
+  };
+
   return (
     <div className="search-view">
       <form onSubmit={handleSearch} className="search-form">
@@ -47,7 +91,7 @@ const Search: React.FC = () => {
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
-            setHasSearched(false); // Reset search state when typing
+            setHasSearched(false);
           }}
           className="search-input glass"
         />
@@ -69,11 +113,15 @@ const Search: React.FC = () => {
 
         {results.map((profile) => {
           const displayName = profile.display_name || profile.name || 'Anonymous';
-          const pubkey = profile._pubkey || profile.pubkey; // Backend returns _pubkey
+          const pubkey = profile._pubkey || profile.pubkey;
           const hasImage = profile.picture && !imageErrors.has(pubkey);
           const gradient = generateGradient(pubkey);
           const initials = getInitials(displayName);
           const handle = profile.name ? `@${profile.name}` : formatPubkey(pubkey);
+
+          const isMe = myPubkey === pubkey;
+          const isFollowing = followingSet.has(pubkey);
+          const isHovering = hoveringUnfollow === pubkey;
 
           return (
             <div
@@ -103,15 +151,28 @@ const Search: React.FC = () => {
                 </div>
                 {profile.about && <div className="profile-about">{profile.about}</div>}
               </div>
-              <button
-                className="follow-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // TODO: Implement follow logic
-                }}
-              >
-                Follow
-              </button>
+
+              {!isMe && (
+                isFollowing ? (
+                  <button
+                    className={`follow-btn following-btn ${isHovering ? 'unfollow-danger' : ''}`}
+                    onClick={(e) => handleUnfollow(pubkey, e)}
+                    onMouseEnter={() => setHoveringUnfollow(pubkey)}
+                    onMouseLeave={() => setHoveringUnfollow(null)}
+                  >
+                    {isHovering ? 'Unfollow' : 'Following'}
+                  </button>
+                ) : (
+                  <button
+                    className="follow-btn follow-primary"
+                    onClick={(e) => handleFollow(pubkey, e)}
+                  >
+                    Follow
+                  </button>
+                )
+              )}
+
+              {isMe && <span className="is-me-badge">You</span>}
             </div>
           );
         })}
@@ -251,6 +312,15 @@ const Search: React.FC = () => {
 
         .follow-btn:hover {
           opacity: 0.9;
+        }
+
+        .is-me-badge {
+          background: rgba(255, 255, 255, 0.1);
+          color: var(--text-muted);
+          padding: 4px 12px;
+          border-radius: 12px;
+          font-size: 13px;
+          font-weight: 600;
         }
       `}</style>
     </div>

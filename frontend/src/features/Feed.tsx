@@ -12,9 +12,12 @@ const Feed: React.FC = () => {
 
     // Infinite Scroll State
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    // Track the oldest timestamp we have requested so far. Start at "now - 1 hour" (since initial load is 1h)
-    // Actually, we should derive this from the events list, but having a pointer helps for next fetch
-    const [oldestFetchedTime, setOldestFetchedTime] = useState<number>(Math.floor(Date.now() / 1000) - 3600);
+    // Track the oldest timestamp we have requested so far
+    // We'll initialize this dynamically based on the actual oldest event in cache
+    const [oldestFetchedTime, setOldestFetchedTime] = useState<number | null>(null);
+    // Track consecutive empty fetches to prevent infinite searching through sparse history
+    const [consecutiveEmptyFetches, setConsecutiveEmptyFetches] = useState(0);
+    const MAX_EMPTY_FETCHES = 3; // Stop after 3 empty windows
 
     const eventsEndRef = useRef<HTMLDivElement>(null);
 
@@ -26,14 +29,38 @@ const Feed: React.FC = () => {
     // Helper to load the next 12-hour block
     const loadMoreHistory = useCallback(() => {
         if (isLoadingMore) return;
+
+        // Stop if we've hit too many empty windows
+        if (consecutiveEmptyFetches >= MAX_EMPTY_FETCHES) {
+            console.log('Reached end of available history (too many empty windows)');
+            return;
+        }
+
         setIsLoadingMore(true);
 
-        const until = oldestFetchedTime;
+        // Calculate 'until' from the oldest event we actually have, not from stale state
+        const cachedEvents = feedCache.getEvents();
+        let until: number;
+
+        if (cachedEvents.length > 0) {
+            // Use the oldest event's timestamp
+            const oldestEvent = cachedEvents[cachedEvents.length - 1]; // Events are sorted desc
+            until = oldestEvent.created_at;
+        } else if (oldestFetchedTime !== null) {
+            // Fallback to state if cache is empty
+            until = oldestFetchedTime;
+        } else {
+            // Ultimate fallback: now - 1 hour
+            until = Math.floor(Date.now() / 1000) - 3600;
+        }
+
         const since = until - (12 * 3600); // 12 hours before that
 
         console.log(`Loading history: ${new Date(since * 1000).toLocaleString()} to ${new Date(until * 1000).toLocaleString()}`);
 
         const historyEndpoint = `feed?since=${since}&until=${until}`;
+
+        let receivedEventCount = 0;
 
         // Safety timeout in case EOSE never comes
         const safetyTimeout = setTimeout(() => {
@@ -41,6 +68,8 @@ const Feed: React.FC = () => {
             cleanupHistory();
             setIsLoadingMore(false);
             setOldestFetchedTime(since); // Move pointer anyway
+            // Timeout counts as empty
+            setConsecutiveEmptyFetches(prev => prev + 1);
         }, 10000);
 
         const cleanupHistory = wsService.connect(
@@ -51,22 +80,34 @@ const Feed: React.FC = () => {
                     if (!feedCache.hasEvent(ev.id)) {
                         feedCache.addEvent(ev);
                         setEvents(feedCache.getEvents());
+                        receivedEventCount++;
                     }
                 }
                 if (message.type === 'eose') {
-                    console.log('History block complete');
+                    console.log(`History block complete (${receivedEventCount} new events)`);
                     cleanupHistory();
                     clearTimeout(safetyTimeout);
                     setIsLoadingMore(false);
                     setOldestFetchedTime(since); // Successfully moved pointer
+
+                    // Update empty fetch counter
+                    if (receivedEventCount === 0) {
+                        setConsecutiveEmptyFetches(prev => prev + 1);
+                        console.log(`Empty window ${consecutiveEmptyFetches + 1}/${MAX_EMPTY_FETCHES}`);
+                    } else {
+                        setConsecutiveEmptyFetches(0); // Reset on success
+                    }
                 }
             },
             (err) => {
                 console.log('History stream error:', err);
+                cleanupHistory();
+                clearTimeout(safetyTimeout);
                 setIsLoadingMore(false);
+                setConsecutiveEmptyFetches(prev => prev + 1);
             }
         );
-    }, [isLoadingMore, oldestFetchedTime]);
+    }, [isLoadingMore, oldestFetchedTime, consecutiveEmptyFetches]);
 
     // Initial Load & Scroll Listener
     useEffect(() => {
@@ -103,15 +144,18 @@ const Feed: React.FC = () => {
             }
         );
 
-        // Trigger first backfill silently if we don't have enough posts
-        setTimeout(() => {
-            if (feedCache.getEvents().length < 5) {
+        // 2. Immediate backfill: Load previous 12 hours after initial feed loads
+        const backfillTimer = setTimeout(() => {
+            // Only trigger if not already loading and we have some initial posts
+            if (!isLoadingMore && feedCache.getEvents().length > 0) {
+                console.log('Starting immediate backfill...');
                 loadMoreHistory();
             }
-        }, 1000);
+        }, 3000); // Wait 3 seconds for initial live feed to populate
 
         return () => {
             cleanupLive();
+            clearTimeout(backfillTimer);
         };
     }, []); // Run once on mount
 
@@ -157,8 +201,8 @@ const Feed: React.FC = () => {
                 ))}
             </div>
 
-            {/* Invisible detector at bottom for infinite scroll - NO SPINNER */}
-            <div ref={eventsEndRef} className="scroll-trigger" style={{ height: '10px', margin: '0' }} />
+            {/* Infinite scroll trigger - Invisible/Silent */}
+            <div ref={eventsEndRef} className="scroll-trigger" style={{ padding: '20px 0', minHeight: '60px' }} />
 
             <style>{`
         .feed-view {

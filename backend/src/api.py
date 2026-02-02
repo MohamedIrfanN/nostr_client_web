@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,7 +83,7 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
                 if not msg:
                     continue
                 if msg[0] == "EOSE":
-                    await queue.put({"type": "eose"})
+                    await queue.put({"type": "_eose_part"})
                     continue
 
                 if msg[0] != "EVENT":
@@ -112,9 +113,21 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
         return
 
 
-async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue):
+async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: int):
+    eose_count = 0
+    eose_sent = False
+    
     while True:
         payload = await queue.get()
+        
+        if payload.get("type") == "_eose_part":
+            eose_count += 1
+            # Only send final EOSE if we haven't already and we hit the target
+            if not eose_sent and eose_count >= expected_eose:
+                await websocket.send_json({"type": "eose"})
+                eose_sent = True
+            continue
+            
         await websocket.send_json(payload)
 
 
@@ -133,7 +146,9 @@ async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], ev
         asyncio.create_task(_relay_stream_task(relay, reqs, queue, seen, event_type))
         for relay, reqs in reqs_by_relay.items()
     ]
-    sender = asyncio.create_task(_ws_sender(websocket, queue))
+    
+    expected_eose = sum(len(reqs) for reqs in reqs_by_relay.values())
+    sender = asyncio.create_task(_ws_sender(websocket, queue, expected_eose))
     keepalive = asyncio.create_task(_ws_keepalive(websocket))
 
     try:
@@ -359,6 +374,10 @@ async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | N
     else:
         since = int(since)
 
+    # Debug logging
+    print(f"[FEED] Fetching feed for {len(authors)} authors")
+    print(f"[FEED] Time range: {since} ({datetime.fromtimestamp(since)}) to {until if until else 'now'} ({datetime.fromtimestamp(until) if until else 'now'})")
+    
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
         reqs = []
@@ -376,7 +395,8 @@ async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | N
                 )
             )
         reqs_by_relay[relay] = reqs
-
+    
+    print(f"[FEED] Sending {sum(len(r) for r in reqs_by_relay.values())} subscription requests across {len(RELAYS)} relays")
     await _run_ws(websocket, reqs_by_relay, event_type="feed")
 
 

@@ -81,9 +81,13 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
                 msg = await relay_manager.recv_json(ws)
                 if not msg:
                     continue
-                if msg[0] != "EVENT":
+                if msg[0] == "EOSE":
+                    await queue.put({"type": "eose"})
                     continue
 
+                if msg[0] != "EVENT":
+                    continue
+                
                 _, _, ev = msg
                 eid = ev.get("id")
                 if not eid or eid in seen:
@@ -343,21 +347,32 @@ async def health():
 
 
 @app.websocket("/ws/feed")
-async def ws_feed(websocket: WebSocket):
+async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | None = None):
     _, my_pubkey = _get_keys()
     follows = await fetch_following_all_relays(my_pubkey)
     authors = list(follows | {my_pubkey})
-    now = int(time.time())
+    
+    # Default to 1 hour ago if not specified
+    if since is None:
+        now = int(time.time())
+        since = now - (60 * 60)
+    else:
+        since = int(since)
 
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
         reqs = []
         for author_chunk in _chunk(authors, AUTHOR_CHUNK_SIZE):
             sub_id = relay_manager.new_sub_id()
+            
+            filter_ = {"authors": author_chunk, "kinds": [1], "since": since}
+            if until is not None:
+                filter_["until"] = int(until)
+
             reqs.append(
                 relay_manager.make_req(
                     sub_id,
-                    {"authors": author_chunk, "kinds": [1], "since": now},
+                    filter_,
                 )
             )
         reqs_by_relay[relay] = reqs

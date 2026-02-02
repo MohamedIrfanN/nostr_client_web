@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '../services/api';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import type { NostrEvent } from '../services/api';
 import { wsService } from '../services/websocket';
 import PostCard from '../components/PostCard';
@@ -9,72 +8,135 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const Feed: React.FC = () => {
     const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
-    const [loading, setLoading] = useState(!feedCache.hasFetched());
-    const [error, setError] = useState<string | null>(null);
+    // isConnecting shows the initial spinner while we wait for WS stream
+    const [isConnecting, setIsConnecting] = useState(true);
     const [isLive, setIsLive] = useState(false);
 
-    const fetchFeed = async (silent = false) => {
-        if (!silent) {
-            setLoading(true);
-        }
-        try {
-            const feedEvents = await api.getFeed();
-            feedCache.setEvents(feedEvents);
-            setEvents(feedCache.getEvents());
-            setError(null);
-        } catch (err) {
-            console.error('Failed to fetch feed:', err);
-            setError('Failed to load feed. Make sure the backend is running.');
-        } finally {
-            if (!silent) {
-                setLoading(false);
-            }
-        }
-    };
+    // Infinite Scroll State
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    // Track the oldest timestamp we have requested so far. Start at "now - 1 hour" (since initial load is 1h)
+    // Actually, we should derive this from the events list, but having a pointer helps for next fetch
+    const [oldestFetchedTime, setOldestFetchedTime] = useState<number>(Math.floor(Date.now() / 1000) - 3600);
+
+    const eventsEndRef = useRef<HTMLDivElement>(null);
 
     const handlePostCreated = async () => {
-        // Silently refresh the feed without showing loading state
-        await fetchFeed(true);
-
-        // Show a brief "New post!" indicator
         setIsLive(true);
         setTimeout(() => setIsLive(false), 2000);
     };
 
-    useEffect(() => {
-        // Sync with cache first (in case updates happened while unmounted)
-        setEvents(feedCache.getEvents());
+    // Helper to load the next 12-hour block
+    const loadMoreHistory = useCallback(() => {
+        if (isLoadingMore) return;
+        setIsLoadingMore(true);
 
-        // Only fetch if we haven't fetched before
-        if (!feedCache.hasFetched()) {
-            fetchFeed();
+        const until = oldestFetchedTime;
+        const since = until - (12 * 3600); // 12 hours before that
+
+        console.log(`Loading history: ${new Date(since * 1000).toLocaleString()} to ${new Date(until * 1000).toLocaleString()}`);
+
+        const historyEndpoint = `feed?since=${since}&until=${until}`;
+
+        // Safety timeout in case EOSE never comes
+        const safetyTimeout = setTimeout(() => {
+            console.log('History fetch safety timeout');
+            cleanupHistory();
+            setIsLoadingMore(false);
+            setOldestFetchedTime(since); // Move pointer anyway
+        }, 10000);
+
+        const cleanupHistory = wsService.connect(
+            historyEndpoint,
+            (message) => {
+                if (message.type === 'feed' && message.event) {
+                    const ev = message.event;
+                    if (!feedCache.hasEvent(ev.id)) {
+                        feedCache.addEvent(ev);
+                        setEvents(feedCache.getEvents());
+                    }
+                }
+                if (message.type === 'eose') {
+                    console.log('History block complete');
+                    cleanupHistory();
+                    clearTimeout(safetyTimeout);
+                    setIsLoadingMore(false);
+                    setOldestFetchedTime(since); // Successfully moved pointer
+                }
+            },
+            (err) => {
+                console.log('History stream error:', err);
+                setIsLoadingMore(false);
+            }
+        );
+    }, [isLoadingMore, oldestFetchedTime]);
+
+    // Initial Load & Scroll Listener
+    useEffect(() => {
+        // Only fetch from cache initially, don't clear it to prevent blinking
+        const cached = feedCache.getEvents();
+        if (cached.length > 0) {
+            setEvents(cached);
+            setIsConnecting(false);
         }
 
-        // Connect to WebSocket for real-time updates
-        const cleanup = wsService.connect(
+        // 1. Live Feed (Last 1 Hour)
+        const cleanupLive = wsService.connect(
             'feed',
             (message) => {
                 if (message.type === 'feed' && message.event) {
+                    setIsConnecting(false);
                     const newEvent = message.event;
-
-                    // Only add if we haven't seen this event
                     if (!feedCache.hasEvent(newEvent.id)) {
                         feedCache.addEvent(newEvent);
-                        setEvents(feedCache.getEvents());
-                        setIsLive(true);
-
-                        // Reset live indicator after 2 seconds
-                        setTimeout(() => setIsLive(false), 2000);
+                        // Update state efficiently
+                        setEvents(prev => {
+                            // Re-sorting inside state update to prevent jitter
+                            const newEvents = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
+                            return newEvents;
+                        });
+                        const isRecent = (Date.now() / 1000) - newEvent.created_at < 120;
+                        if (isRecent) {
+                            setIsLive(true);
+                            setTimeout(() => setIsLive(false), 2000);
+                        }
                     }
                 }
             },
             (error) => {
-                console.error('WebSocket error:', error);
+                console.error('Live feed WS error:', error);
+                setIsConnecting(false);
             }
         );
 
-        return cleanup;
-    }, []);
+        // Trigger first backfill silently if we don't have enough posts
+        setTimeout(() => {
+            if (feedCache.getEvents().length < 5) {
+                loadMoreHistory();
+            }
+        }, 1000);
+
+        return () => {
+            cleanupLive();
+        };
+    }, []); // Run once on mount
+
+    // Scroll Observer
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting) {
+                    loadMoreHistory();
+                }
+            },
+            { threshold: 0.1, rootMargin: '100px' } // Trigger earlier (100px before bottom) for smoothness
+        );
+
+        if (eventsEndRef.current) {
+            observer.observe(eventsEndRef.current);
+        }
+
+        return () => observer.disconnect();
+    }, [loadMoreHistory]);
 
     return (
         <div className="feed-view">
@@ -87,22 +149,10 @@ const Feed: React.FC = () => {
 
             <CreatePost onPostCreated={handlePostCreated} />
 
-            {loading && events.length === 0 && (
+            {/* Main Loading State (Initial only) */}
+            {events.length === 0 && (
                 <div className="loading-state">
-                    <LoadingSpinner label="Connecting to relays..." size="large" />
-                </div>
-            )}
-
-            {error && (
-                <div className="error-card glass">
-                    <p>{error}</p>
-                    <button onClick={() => fetchFeed()}>Retry</button>
-                </div>
-            )}
-
-            {!loading && !error && events.length === 0 && (
-                <div className="empty-state">
-                    <p>No notes found in your feed.</p>
+                    <LoadingSpinner label="Loading feed..." size="large" />
                 </div>
             )}
 
@@ -112,39 +162,25 @@ const Feed: React.FC = () => {
                 ))}
             </div>
 
+            {/* Invisible detector at bottom for infinite scroll - NO SPINNER */}
+            <div ref={eventsEndRef} className="scroll-trigger" style={{ height: '10px', margin: '0' }} />
+
             <style>{`
         .feed-view {
           background: var(--bg-color);
+          min-height: 100vh; /* Ensure full height to push footer down */
         }
 
-        .loading-state, .empty-state {
+        .loading-state {
           text-align: center;
           padding: 40px 20px;
           color: var(--text-muted);
         }
 
-        .error-card {
-          padding: 30px 20px;
-          text-align: center;
-          margin: 20px;
-          background: var(--bg-card);
-          border-radius: 12px;
-          border: 1px solid var(--border-color);
-        }
-
-        .error-card p {
-          color: var(--text-primary);
-          margin-bottom: 15px;
-        }
-
-        .error-card button {
-          background: var(--accent-color);
-          color: white;
-          padding: 8px 20px;
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
-          font-weight: 600;
+        .scroll-trigger {
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
         .live-indicator {

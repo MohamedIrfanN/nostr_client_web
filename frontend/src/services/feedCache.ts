@@ -17,7 +17,9 @@ export const feedCache = {
     addEvent: (event: NostrEvent) => {
         if (!feedEventIds.has(event.id)) {
             feedEventIds.add(event.id);
-            cachedFeedEvents = [event, ...cachedFeedEvents];
+            cachedFeedEvents.push(event);
+            // Always keep sorted by created_at descending (newest first)
+            cachedFeedEvents.sort((a, b) => b.created_at - a.created_at);
         }
     },
 

@@ -8,6 +8,7 @@ RELAYS = [
     "wss://nostr.wine",
     "wss://relay.primal.net",
     "wss://nostr.land",
+    "ws://localhost:8888"
 
 ]
 

@@ -2,7 +2,7 @@ import type { NostrEvent } from './api';
 
 const WS_BASE_URL = 'ws://localhost:8000';
 
-export type WebSocketMessageType = 'feed' | 'dm' | 'notify' | 'ping';
+export type WebSocketMessageType = 'feed' | 'dm' | 'notify' | 'ping' | 'eose';
 
 export interface WebSocketMessage {
     type: WebSocketMessageType;

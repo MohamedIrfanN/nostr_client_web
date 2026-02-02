@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import type { NostrEvent } from '../services/api';
 import { wsService } from '../services/websocket';
@@ -6,7 +6,6 @@ import type { WebSocketMessage } from '../services/websocket';
 import PostCard from '../components/PostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { generateGradient, getInitials, formatPubkey } from '../utils/format';
-
 import { nip19 } from 'nostr-tools';
 
 interface ProfileProps {
@@ -16,55 +15,83 @@ interface ProfileProps {
 
 const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) => {
     const [posts, setPosts] = useState<NostrEvent[]>([]);
-    const [loading, setLoading] = useState(true);
+    // Split loading states
+    const [isPostsLoading, setIsPostsLoading] = useState(true);
+    const [isProfileLoading, setIsProfileLoading] = useState(!initialProfile);
+
     const [profile, setProfile] = useState(initialProfile);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
     const [copied, setCopied] = useState(false);
 
-    const fetchUserContent = useCallback(async () => {
-        setLoading(true);
-        try {
-            // Fetch posts
-            const userPosts = await api.getUserPosts(pubkey);
-            setPosts(userPosts);
-
-            // If we don't have profile yet, fetch it
-            if (!profile) {
-                const p = await api.getProfile(pubkey);
-                setProfile(p);
+    // Initial Profile Metadata Load
+    useEffect(() => {
+        let isMounted = true;
+        const loadProfile = async () => {
+            // If passed as prop, use it
+            if (initialProfile) {
+                setIsProfileLoading(false);
+                return;
             }
-            setError(null);
-        } catch (err) {
-            console.error('Failed to fetch profile content:', err);
-            setError('Could not load profile posts.');
-        } finally {
-            setLoading(false);
-        }
-    }, [pubkey, profile]);
 
-    useEffect(() => {
-        fetchUserContent();
-    }, [fetchUserContent]);
+            try {
+                setIsProfileLoading(true);
+                const p = await api.getProfile(pubkey);
+                if (isMounted) {
+                    setProfile(p);
+                    setIsProfileLoading(false);
+                }
+            } catch (err) {
+                console.error('Profile fetch error', err);
+                if (isMounted) setIsProfileLoading(false);
+            }
+        };
+        loadProfile();
+        return () => { isMounted = false; };
+    }, [pubkey, initialProfile]);
 
-    // Live streaming subscription
+    // WebSocket Stream for Posts
     useEffect(() => {
+        setPosts([]); // Clear posts on profile change
+        setIsPostsLoading(true);
+        setError(null);
+
         const cleanup = wsService.connect(
-            `users/${pubkey}`,
+            `users/${pubkey}?limit=50`,
             (message: WebSocketMessage) => {
                 if (message.type === 'feed' && message.event) {
                     const newEvent = message.event;
                     setPosts(prev => {
                         // Avoid duplicates
                         if (prev.some(p => p.id === newEvent.id)) return prev;
-                        // Add new post to top
-                        return [newEvent, ...prev];
+
+                        // Insert and Sort desc
+                        const newPosts = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
+                        return newPosts;
                     });
+                    setIsPostsLoading(false);
+                }
+                if (message.type === 'eose') {
+                    // End of stored events
+                    setIsPostsLoading(false);
                 }
             },
-            (err) => console.error('Profile stream error:', err)
+            (err) => {
+                console.error('Profile stream error:', err);
+                // Don't show error immediately
+                setIsPostsLoading(false);
+            }
         );
-        return cleanup;
+
+        // Safety timeout to disable spinner if no posts found
+        const timeout = setTimeout(() => {
+            setIsPostsLoading(false);
+        }, 3000);
+
+        return () => {
+            cleanup();
+            clearTimeout(timeout);
+        };
     }, [pubkey]);
 
     const displayName = profile?.display_name || profile?.name || 'User';
@@ -74,7 +101,8 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const banner = profile?.banner;
     const avatar = profile?.picture;
 
-    const isLoadingProfile = loading && !profile;
+    // Use specific loading state for header
+    const isLoadingProfile = isProfileLoading && !profile;
 
     return (
         <div className="profile-page">
@@ -188,7 +216,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             </div>
 
             <div className="profile-feed">
-                {loading ? (
+                {isPostsLoading ? (
                     <LoadingSpinner label="Loading posts..." size="large" />
                 ) : error ? (
                     <div className="error-state">{error}</div>
@@ -207,6 +235,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                                 }
                                 return true;
                             })
+                            // Posts are already sorted in state
                             .map(post => (
                                 <PostCard key={post.id} event={post} />
                             ))}

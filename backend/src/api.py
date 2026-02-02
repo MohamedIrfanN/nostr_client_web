@@ -381,14 +381,23 @@ async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | N
 
 
 @app.websocket("/ws/users/{pubkey}")
-async def ws_user_feed(websocket: WebSocket, pubkey: str):
-    now = int(time.time())
-    
+async def ws_user_feed(websocket: WebSocket, pubkey: str, since: int | None = None, limit: int | None = None):
     # Normalize pubkey if needed
     try:
         norm_pubkey = normalize_pubkey_input(pubkey)
     except:
         norm_pubkey = pubkey
+
+    filter_args = {"authors": [norm_pubkey], "kinds": [1]}
+    
+    if limit is not None:
+        filter_args["limit"] = int(limit)
+    
+    if since is not None:
+        filter_args["since"] = int(since)
+    elif limit is None:
+        # If no limit and no since, default to "Live" (since Now)
+        filter_args["since"] = int(time.time())
 
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
@@ -396,7 +405,7 @@ async def ws_user_feed(websocket: WebSocket, pubkey: str):
         reqs_by_relay[relay] = [
             relay_manager.make_req(
                 sub_id,
-                {"authors": [norm_pubkey], "kinds": [1], "since": now},
+                filter_args,
             )
         ]
 
@@ -404,9 +413,23 @@ async def ws_user_feed(websocket: WebSocket, pubkey: str):
 
 
 @app.websocket("/ws/dm")
-async def ws_dm(websocket: WebSocket):
+async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | None = None):
     _, my_pubkey = _get_keys()
-    now = int(time.time())
+    
+    # Default to 30 days of DMs if not specified
+    if since is None:
+        now = int(time.time())
+        since = now - (60 * 60 * 24 * 30)
+    else:
+        since = int(since)
+
+    # Build filter
+    filter_recv = {"kinds": [4], "#p": [my_pubkey], "since": since}
+    filter_sent = {"kinds": [4], "authors": [my_pubkey], "since": since}
+    
+    if limit is not None:
+        filter_recv["limit"] = int(limit)
+        filter_sent["limit"] = int(limit)
 
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
@@ -414,8 +437,8 @@ async def ws_dm(websocket: WebSocket):
         reqs_by_relay[relay] = [
             relay_manager.make_req(
                 sub_id,
-                {"kinds": [4], "#p": [my_pubkey], "since": now},
-                {"kinds": [4], "authors": [my_pubkey], "since": now},
+                filter_recv,
+                filter_sent,
             )
         ]
 

@@ -8,6 +8,7 @@ export interface NostrEvent {
     tags: string[][];
     content: string;
     sig: string;
+    partner_pubkey?: string;
 }
 
 export interface ApiResponse<T> {

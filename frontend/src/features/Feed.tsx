@@ -8,8 +8,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const Feed: React.FC = () => {
     const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
-    // isConnecting shows the initial spinner while we wait for WS stream
-    const [isConnecting, setIsConnecting] = useState(true);
     const [isLive, setIsLive] = useState(false);
 
     // Infinite Scroll State
@@ -76,7 +74,6 @@ const Feed: React.FC = () => {
         const cached = feedCache.getEvents();
         if (cached.length > 0) {
             setEvents(cached);
-            setIsConnecting(false);
         }
 
         // 1. Live Feed (Last 1 Hour)
@@ -84,7 +81,6 @@ const Feed: React.FC = () => {
             'feed',
             (message) => {
                 if (message.type === 'feed' && message.event) {
-                    setIsConnecting(false);
                     const newEvent = message.event;
                     if (!feedCache.hasEvent(newEvent.id)) {
                         feedCache.addEvent(newEvent);
@@ -104,7 +100,6 @@ const Feed: React.FC = () => {
             },
             (error) => {
                 console.error('Live feed WS error:', error);
-                setIsConnecting(false);
             }
         );
 

@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
+import { wsService } from '../services/websocket';
+import { dmCache } from '../services/dmCache';
+import type { InboxChat as CacheChat } from '../services/dmCache';
 import { getProfileWithCache } from '../services/profileCache';
-import { generateGradient, getInitials, formatRelativeTime } from '../utils/format';
+import { generateGradient, getInitials, formatRelativeTime, formatPubkey } from '../utils/format';
 import ChatView from './ChatView';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -10,12 +13,9 @@ interface SelectedChat {
   name: string;
 }
 
-interface InboxChat {
-  pubkey: string;
+interface InboxChat extends CacheChat {
   display_name?: string;
   name?: string;
-  last_event_at?: number;
-  last_message?: string;
   picture?: string;
 }
 
@@ -26,44 +26,119 @@ const Messages: React.FC = () => {
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    const fetchInbox = async () => {
-      try {
-        const data = await api.getDMInbox();
-        setInbox(data);
-        setError(null);
+  // Debounce ref to prevent render storms
+  const updateTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-        // Prefetch profile pictures for all inbox items
-        const pubkeys = data.map((chat: any) => chat.pubkey).filter(Boolean);
-        await Promise.all(
-          pubkeys.map(async (pubkey: string) => {
-            const profile = await getProfileWithCache(pubkey, api.getProfile);
-            if (profile?.picture) {
-              // Update inbox item with profile picture
-              setInbox((prev) =>
-                prev.map((chat) =>
-                  chat.pubkey === pubkey ? { ...chat, picture: profile.picture } : chat
-                )
-              );
-            }
-          })
-        );
-      } catch (err) {
-        console.error('Failed to fetch DM inbox:', err);
-        setError('Failed to load messages. Please try again later.');
-        setInbox([]);
-      } finally {
-        setLoading(false);
+  const triggerInboxUpdate = () => {
+    if (updateTimeoutRef.current) return;
+
+    updateTimeoutRef.current = setTimeout(() => {
+      updateInboxFromCache();
+      updateTimeoutRef.current = null;
+    }, 500); // 500ms debounce
+  };
+
+  const updateInboxFromCache = async () => {
+    const chats = dmCache.getInbox();
+
+    setInbox(prevInbox => {
+      return chats.map(c => {
+        const existing = prevInbox.find(p => p.pubkey === c.pubkey);
+        return {
+          ...c,
+          display_name: existing?.display_name,
+          name: existing?.name,
+          picture: existing?.picture
+        };
+      });
+    });
+
+    // Optimization: Don't filter, just iterate. Profile cache handles validation.
+    const missingProfiles = chats;
+
+    await Promise.all(missingProfiles.map(async (chat) => {
+      const profile = await getProfileWithCache(chat.pubkey, api.getProfile);
+      if (profile) {
+        setInbox(prev => prev.map(item => {
+          if (item.pubkey === chat.pubkey) {
+            return {
+              ...item,
+              display_name: profile.display_name,
+              name: profile.name,
+              picture: profile.picture
+            };
+          }
+          return item;
+        }));
       }
+    }));
+  };
+
+  useEffect(() => {
+    // 1. Load cache immediately
+    if (dmCache.hasFetched()) {
+      updateInboxFromCache().then(() => setLoading(false));
+    }
+
+    // 2. Fast/Recent Load (Last 30 Days)
+    const thirtyDaysAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 3600);
+
+    const cleanupFunctions: (() => void)[] = [];
+
+    const cleanupRecent = wsService.connect(
+      `dm?since=${thirtyDaysAgo}`,
+      (message) => {
+        if (message.type === 'dm' && message.event) {
+          if (message.event.partner_pubkey) {
+            dmCache.addEvent(message.event);
+            triggerInboxUpdate();
+            setError(null); // Clear any connection errors since we are getting data
+            setLoading(false);
+          }
+        }
+      },
+      (err) => {
+        console.error('Recent DM error:', err);
+        // Only show error if we have absolutely nothing to show
+        setTimeout(() => {
+          if (!dmCache.hasFetched() && inbox.length === 0) setError('Connection failed');
+        }, 3000);
+      }
+    );
+    cleanupFunctions.push(cleanupRecent);
+
+    // 3. Background History Load
+    const twoYearsAgo = Math.floor(Date.now() / 1000) - (2 * 365 * 24 * 3600);
+
+    const backfillTimer = setTimeout(() => {
+      const cleanupHistory = wsService.connect(
+        `dm?since=${twoYearsAgo}&limit=2000`,
+        (message) => {
+          if (message.type === 'dm' && message.event) {
+            if (message.event.partner_pubkey) {
+              dmCache.addEvent(message.event);
+              triggerInboxUpdate();
+            }
+          }
+        },
+        (err) => console.log('History backfill error', err)
+      );
+      cleanupFunctions.push(cleanupHistory);
+    }, 2000);
+
+    const timeout = setTimeout(() => setLoading(false), 3000);
+
+    return () => {
+      cleanupFunctions.forEach(fn => fn());
+      clearTimeout(backfillTimer);
+      clearTimeout(timeout);
     };
-    fetchInbox();
   }, []);
 
   const handleImageError = (pubkey: string) => {
     setImageErrors((prev) => new Set(prev).add(pubkey));
   };
 
-  // If a chat is selected, show ChatView
   if (selectedChat) {
     return (
       <ChatView
@@ -74,26 +149,25 @@ const Messages: React.FC = () => {
     );
   }
 
-  // Otherwise, show inbox list
   return (
     <div className="messages-view">
-      {loading ? (
+      {loading && inbox.length === 0 ? (
         <LoadingSpinner label="Loading your conversations..." size="large" />
-      ) : error ? (
+      ) : error && inbox.length === 0 ? (
         <div className="error-state card glass">
           <h3>⚠️ Error</h3>
           <p>{error}</p>
-          <button onClick={() => window.location.reload()}>Retry</button>
         </div>
-      ) : !Array.isArray(inbox) || inbox.length === 0 ? (
+      ) : inbox.length === 0 ? (
         <div className="empty-state card glass">
-          <h3>No messages yet</h3>
-          <p>Start a conversation by searching for a user.</p>
+          <h3>No messages found</h3>
+          <p>Your inbox is empty (or check your connection).</p>
         </div>
       ) : (
         <div className="inbox-list">
-          {inbox.filter(chat => chat && chat.pubkey).map((chat) => {
-            const displayName = chat.display_name || chat.name || 'Anonymous';
+          {inbox.map((chat) => {
+            const hasName = !!(chat.display_name || chat.name);
+            const displayName = chat.display_name || chat.name || formatPubkey(chat.pubkey);
             const gradient = generateGradient(chat.pubkey);
             const initials = getInitials(displayName);
             const hasImage = chat.picture && !imageErrors.has(chat.pubkey);
@@ -101,8 +175,9 @@ const Messages: React.FC = () => {
             return (
               <div
                 key={chat.pubkey}
-                className="inbox-chat-item"
+                className={`inbox-chat-item ${!hasName ? 'loading-profile' : ''}`}
                 onClick={() => setSelectedChat({ pubkey: chat.pubkey, name: displayName })}
+                style={{ opacity: hasName ? 1 : 0.7, transition: 'opacity 0.3s' }}
               >
                 <div className="inbox-avatar">
                   {hasImage ? (
@@ -119,14 +194,14 @@ const Messages: React.FC = () => {
                 </div>
                 <div className="inbox-details">
                   <div className="inbox-header">
-                    <span className="inbox-name">{displayName}</span>
+                    <span className="inbox-name" style={!hasName ? { fontFamily: 'monospace', fontSize: '0.9em' } : {}}>
+                      {displayName}
+                    </span>
                     <span className="inbox-time">
-                      {chat.last_event_at
-                        ? formatRelativeTime(chat.last_event_at)
-                        : 'Unknown'}
+                      {formatRelativeTime(chat.last_event_at)}
                     </span>
                   </div>
-                  <div className="inbox-last-msg">{chat.last_message || 'No message'}</div>
+                  <div className="inbox-last-msg">{chat.last_message}</div>
                 </div>
               </div>
             );

@@ -4,11 +4,36 @@ interface ProfileData {
     picture?: string;
     about?: string;
     nip05?: string;
+    banner?: string;
+    website?: string;
+    lud16?: string;
 }
+
+import type { NostrEvent } from './api';
 
 // In-memory cache for profile data
 const profileCache = new Map<string, ProfileData>();
 const pendingRequests = new Map<string, Promise<ProfileData | null>>();
+
+// In-memory cache for user posts
+const userPostsCache = new Map<string, NostrEvent[]>();
+
+export function getCachedUserPosts(pubkey: string): NostrEvent[] | undefined {
+    return userPostsCache.get(pubkey);
+}
+
+export function cacheUserPosts(pubkey: string, posts: NostrEvent[]) {
+    userPostsCache.set(pubkey, posts);
+}
+
+export function appendCachedUserPost(pubkey: string, post: NostrEvent) {
+    const existing = userPostsCache.get(pubkey) || [];
+    if (existing.some(p => p.id === post.id)) return;
+
+    // Prepend (since new posts are usually newer) and sort desc
+    const updated = [post, ...existing].sort((a, b) => b.created_at - a.created_at);
+    userPostsCache.set(pubkey, updated);
+}
 
 /**
  * Fetch profile data with caching to avoid duplicate requests

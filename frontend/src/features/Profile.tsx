@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import type { NostrEvent } from '../services/api';
+import { getProfileWithCache, getCachedUserPosts, cacheUserPosts } from '../services/profileCache';
 import { wsService } from '../services/websocket';
 import type { WebSocketMessage } from '../services/websocket';
 import PostCard from '../components/PostCard';
@@ -36,7 +37,8 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
             try {
                 setIsProfileLoading(true);
-                const p = await api.getProfile(pubkey);
+                // Memory Cache + API Fetch
+                const p = await getProfileWithCache(pubkey, api.getProfile);
                 if (isMounted) {
                     setProfile(p);
                     setIsProfileLoading(false);
@@ -52,8 +54,16 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
     // WebSocket Stream for Posts
     useEffect(() => {
-        setPosts([]); // Clear posts on profile change
-        setIsPostsLoading(true);
+        // 1. Try Cache First
+        const cached = getCachedUserPosts(pubkey);
+        if (cached && cached.length > 0) {
+            setPosts(cached);
+            setIsPostsLoading(false);
+        } else {
+            setPosts([]);
+            setIsPostsLoading(true);
+        }
+
         setError(null);
 
         const cleanup = wsService.connect(
@@ -67,13 +77,17 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
                         // Insert and Sort desc
                         const newPosts = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
+
+                        // Update cache
+                        cacheUserPosts(pubkey, newPosts);
+
                         return newPosts;
                     });
                     setIsPostsLoading(false);
                 }
                 if (message.type === 'eose') {
-                    // End of stored events
-                    setIsPostsLoading(false);
+                    // End of stored events - Ignore for UI to prevent flash
+                    // Let timeout handle the empty state case
                 }
             },
             (err) => {
@@ -86,7 +100,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         // Safety timeout to disable spinner if no posts found
         const timeout = setTimeout(() => {
             setIsPostsLoading(false);
-        }, 3000);
+        }, 1500);
 
         return () => {
             cleanup();

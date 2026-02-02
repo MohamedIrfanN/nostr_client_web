@@ -21,6 +21,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const [isProfileLoading, setIsProfileLoading] = useState(!initialProfile);
 
     const [profile, setProfile] = useState(initialProfile);
+    const [stats, setStats] = useState<{ following_count: number; followers_count: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
     const [copied, setCopied] = useState(false);
@@ -32,23 +33,35 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             // If passed as prop, use it
             if (initialProfile) {
                 setIsProfileLoading(false);
-                return;
-            }
-
-            try {
-                setIsProfileLoading(true);
-                // Memory Cache + API Fetch
-                const p = await getProfileWithCache(pubkey, api.getProfile);
-                if (isMounted) {
-                    setProfile(p);
-                    setIsProfileLoading(false);
+            } else {
+                try {
+                    setIsProfileLoading(true);
+                    // Memory Cache + API Fetch
+                    const p = await getProfileWithCache(pubkey, api.getProfile);
+                    if (isMounted) {
+                        setProfile(p);
+                        setIsProfileLoading(false);
+                    }
+                } catch (err) {
+                    console.error('Profile fetch error', err);
+                    if (isMounted) setIsProfileLoading(false);
                 }
-            } catch (err) {
-                console.error('Profile fetch error', err);
-                if (isMounted) setIsProfileLoading(false);
             }
         };
         loadProfile();
+
+        // 2. Fetch Stats Asynchronously (Non-blocking)
+        const loadStats = async () => {
+            try {
+                const s = await api.getProfileStats(pubkey);
+                if (isMounted) setStats(s);
+            } catch (e) {
+                console.error('Stats fetch error:', e);
+            }
+        };
+        // Delay slightly to prioritize UI rendering
+        setTimeout(loadStats, 100);
+
         return () => { isMounted = false; };
     }, [pubkey, initialProfile]);
 
@@ -207,8 +220,12 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                         </div>
 
                         <div className="profile-stats">
-                            <div className="stat"><strong>0</strong> <span>Following</span></div>
-                            <div className="stat"><strong>0</strong> <span>Followers</span></div>
+                            <div className="stat">
+                                <strong>{stats ? stats.following_count : '-'}</strong> <span>Following</span>
+                            </div>
+                            <div className="stat">
+                                <strong>{stats ? stats.followers_count : '-'}</strong> <span>Followers</span>
+                            </div>
                         </div>
                     </div>
                 </div>

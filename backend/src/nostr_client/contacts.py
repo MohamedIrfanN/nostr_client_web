@@ -98,3 +98,58 @@ def apply_unfollow(current: set[str], pubkey_input: str) -> set[str]:
     nxt = set(current)
     nxt.discard(pk)
     return nxt
+async def fetch_followers_all_relays(my_pubkey: str) -> set[str]:
+    """
+    Fetch all unique pubkeys that follow 'my_pubkey'.
+    We look for Kind 3 events where '#p' tag includes 'my_pubkey'.
+    """
+    # Filter: Kind 3 (Contacts), #p tag = my_pubkey
+    req_filter = {"kinds": [CONTACTS_KIND], "#p": [my_pubkey], "limit": 1000}
+    
+    sub_id = relay_manager.new_sub_id()
+    req = relay_manager.make_req(sub_id, req_filter)
+    
+    followers = set()
+
+    async def fetch_from_relay(relay_url: str):
+        try:
+            async with relay_manager.connect(relay_url) as ws:
+                await relay_manager.send(ws, req)
+                
+                start = time.time()
+                while True:
+                    if time.time() - start > CONTACTS_FETCH_TIMEOUT:
+                        break
+
+                    try:
+                        msg = await relay_manager.recv_json(ws, timeout=CONTACTS_FETCH_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        break
+
+                    if not msg:
+                        continue
+
+                    if msg[0] == "EVENT":
+                        _, got_sub, ev = msg
+                        if got_sub == sub_id:
+                            pubkey = ev.get("pubkey")
+                            if pubkey:
+                                followers.add(pubkey)
+
+                    elif msg[0] == "EOSE":
+                        _, got_sub = msg
+                        if got_sub == sub_id:
+                            break
+        except:
+            pass
+
+    # Run in parallel
+    await asyncio.gather(*(fetch_from_relay(r) for r in RELAYS))
+    return followers
+
+
+def apply_unfollow(current: set[str], pubkey_input: str) -> set[str]:
+    pk = normalize_pubkey_input(pubkey_input)
+    nxt = set(current)
+    nxt.discard(pk)
+    return nxt

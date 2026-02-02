@@ -16,7 +16,7 @@ from .nostr_client.events import (
     build_signed_comment,
 )
 from .nostr_client.publish import publish_to_relays
-from .nostr_client.contacts import fetch_following_all_relays, apply_follow, apply_unfollow
+from .nostr_client.contacts import fetch_following_all_relays, fetch_followers_all_relays, apply_follow, apply_unfollow
 from .nostr_client.profile_search import fetch_profile_by_pubkey, search_profiles_by_name
 from .nostr_client.dm_subscribe import fetch_dm_inbox_7d, fetch_dm_history_7d, _decrypt, _extract_partner
 from .nostr_client.mute_list import fetch_published_mute_set
@@ -191,6 +191,25 @@ async def get_user_posts(pubkey: str, limit: int | None = None):
         norm_pubkey = pubkey
     events = await fetch_feed_events([norm_pubkey], limit=limit)
     return {"count": len(events), "events": events}
+
+
+@app.get("/users/{pubkey}/stats")
+async def get_user_stats(pubkey: str):
+    try:
+        norm_pubkey = normalize_pubkey_input(pubkey)
+    except:
+        norm_pubkey = pubkey
+        
+    # Run following and followers stats in parallel
+    following, followers = await asyncio.gather(
+        fetch_following_all_relays(norm_pubkey),
+        fetch_followers_all_relays(norm_pubkey)
+    )
+    
+    return {
+        "following_count": len(following),
+        "followers_count": len(followers)
+    }
 
 
 @app.post("/publish")

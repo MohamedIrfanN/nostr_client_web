@@ -173,6 +173,14 @@ export const api = {
         return data.events || [];
     },
 
+    async getProfileStats(pubkey: string): Promise<{ following_count: number; followers_count: number }> {
+        const response = await fetch(`${API_BASE_URL}/users/${pubkey}/stats`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch stats');
+        }
+        return await response.json();
+    },
+
     async checkHealth(): Promise<boolean> {
         try {
             const response = await fetch(`${API_BASE_URL}/health`);

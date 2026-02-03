@@ -76,9 +76,13 @@ const Messages: React.FC = () => {
   };
 
   useEffect(() => {
-    // Load muted list
-    api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+    // Refresh mute list whenever we return to the list view (or on mount)
+    if (!selectedChat) {
+      api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+    }
+  }, [selectedChat]);
 
+  useEffect(() => {
     // 1. Load cache immediately
     if (dmCache.hasFetched()) {
       updateInboxFromCache().then(() => setLoading(false));
@@ -207,7 +211,9 @@ const Messages: React.FC = () => {
                       {formatRelativeTime(chat.last_event_at)}
                     </span>
                   </div>
-                  <div className="inbox-last-msg">{chat.last_message}</div>
+                  <div className="inbox-last-msg">
+                    {isMuted ? null : chat.last_message}
+                  </div>
                 </div>
               </div>
             );

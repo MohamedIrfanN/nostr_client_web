@@ -6,8 +6,11 @@ import CreatePost from '../components/CreatePost';
 import { feedCache } from '../services/feedCache';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { api } from '../services/api';
+
 const Feed: React.FC = () => {
     const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
+    const [mutedSet, setMutedSet] = useState<Set<string>>(new Set());
     const [isLive, setIsLive] = useState(false);
 
     // Infinite Scroll State
@@ -119,6 +122,9 @@ const Feed: React.FC = () => {
 
     // Initial Load & Scroll Listener
     useEffect(() => {
+        // Fetch Mute List
+        api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+
         // Only fetch from cache initially, don't clear it to prevent blinking
         const cached = feedCache.getEvents();
         if (cached.length > 0) {
@@ -204,9 +210,11 @@ const Feed: React.FC = () => {
             )}
 
             <div className="posts-list">
-                {events.map((event) => (
-                    <PostCard key={event.id} event={event} />
-                ))}
+                {events
+                    .filter(ev => !mutedSet.has(ev.pubkey))
+                    .map((event) => (
+                        <PostCard key={event.id} event={event} />
+                    ))}
             </div>
 
             {/* Infinite scroll trigger - Invisible/Silent */}

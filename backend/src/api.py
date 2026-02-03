@@ -123,7 +123,8 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
 
 
 
-async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: int, blocked_set: set[str] | None = None):
+
+async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: int, blocked_set: set[str] | None = None, allow_muted_history: bool = True):
     eose_count = 0
     eose_sent = False
     connection_start = int(time.time())
@@ -140,21 +141,22 @@ async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: 
                 eose_sent = True
             continue
         
-        # Check backend mute filter for live events
+        # Check backend mute filter
         ev = payload.get("event")
         if ev:
-            # Check if this is a "live" event (created after we started listening)
-            # We add a small buffer (e.g. -5s) to avoid race conditions but generally "live" means "new".
-            # For strictness: created_at > connection_start
-            created_at = ev.get("created_at", 0)
-            
-            # Identify the author to block (sender)
-            # For DMs, the sender is ev['pubkey'].
             author = ev.get("pubkey")
             
-            if author in blocked_set and created_at > connection_start:
-                print(f"[WS] 🚫 Blocking live event from muted user {author[:8]}")
-                continue
+            if author in blocked_set:
+                # 1. Strict Mode (Feed): Block EVERYTHING
+                if not allow_muted_history:
+                    # print(f"[WS] 🚫 Strict blocking event from {author[:8]}")
+                    continue
+                
+                # 2. Relaxed Mode (DM): Block only LIVE new events
+                created_at = ev.get("created_at", 0)
+                if created_at > connection_start:
+                    print(f"[WS] 🚫 Blocking live event from muted user {author[:8]}")
+                    continue
             
         await websocket.send_json(payload)
 
@@ -168,7 +170,7 @@ async def _ws_keepalive(websocket: WebSocket, interval: float = 20.0):
             break
 
 
-async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str, blocked_set: set[str] | None = None):
+async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str, blocked_set: set[str] | None = None, allow_muted_history: bool = True):
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue()
     seen: set[str] = set()
@@ -179,7 +181,7 @@ async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], ev
     ]
     
     expected_eose = sum(len(reqs) for reqs in reqs_by_relay.values())
-    sender = asyncio.create_task(_ws_sender(websocket, queue, expected_eose, blocked_set))
+    sender = asyncio.create_task(_ws_sender(websocket, queue, expected_eose, blocked_set, allow_muted_history))
     keepalive = asyncio.create_task(_ws_keepalive(websocket))
 
     try:
@@ -520,13 +522,14 @@ async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | N
 
 @app.websocket("/ws/users/{pubkey}")
 async def ws_user_feed(websocket: WebSocket, pubkey: str, since: int | None = None, limit: int | None = None):
-    # Normalize pubkey if needed
+    _, my_pubkey = _get_keys()
     try:
         norm_pubkey = normalize_pubkey_input(pubkey)
     except:
-        norm_pubkey = pubkey
+        await websocket.close(code=4000)
+        return
 
-    filter_args = {"authors": [norm_pubkey], "kinds": [1]}
+    filter_args = {"kinds": [1], "authors": [norm_pubkey]}
     
     if limit is not None:
         filter_args["limit"] = int(limit)
@@ -536,6 +539,9 @@ async def ws_user_feed(websocket: WebSocket, pubkey: str, since: int | None = No
     elif limit is None:
         # If no limit and no since, default to "Live" (since Now)
         filter_args["since"] = int(time.time())
+
+    # Fetch mute list to block ALL events (Feed)
+    blocked_set = await fetch_published_mute_set(my_pubkey)
 
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
@@ -547,7 +553,7 @@ async def ws_user_feed(websocket: WebSocket, pubkey: str, since: int | None = No
             )
         ]
 
-    await _run_ws(websocket, reqs_by_relay, event_type="feed")
+    await _run_ws(websocket, reqs_by_relay, event_type="feed", blocked_set=blocked_set, allow_muted_history=False)
 
 
 @app.websocket("/ws/dm")

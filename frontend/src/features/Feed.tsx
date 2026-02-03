@@ -122,10 +122,11 @@ const Feed: React.FC = () => {
                     const newEvent = message.event;
                     if (!feedCache.hasEvent(activeTab, newEvent.id)) {
                         feedCache.addEvent(activeTab, newEvent);
-                        setEvents(prev => {
-                            const updated = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
-                            return updated;
-                        });
+                        // Sync directly from cache to ensure UI matches source of truth
+                        // This handles sorting and deduplication automatically via feedCache
+                        setEvents(feedCache.getEvents(activeTab));
+
+                        // Flash "New post" indicator if it's recent
                         if ((Date.now() / 1000) - newEvent.created_at < 120) {
                             setIsLive(true);
                             setTimeout(() => setIsLive(false), 2000);

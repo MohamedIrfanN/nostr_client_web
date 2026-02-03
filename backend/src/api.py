@@ -89,13 +89,14 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
             for req in reqs:
                 await relay_manager.send(ws, req)
 
-            while eose_sent < eose_expected:
+            while True:
                 msg = await relay_manager.recv_json(ws)
                 if not msg:
                     continue
                 if msg[0] == "EOSE":
-                    await queue.put({"type": "_eose_part"})
-                    eose_sent += 1
+                    if eose_sent < eose_expected:
+                        await queue.put({"type": "_eose_part"})
+                        eose_sent += 1
                     continue
 
                 if msg[0] != "EVENT":

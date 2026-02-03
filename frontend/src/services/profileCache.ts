@@ -15,6 +15,9 @@ import type { NostrEvent } from './api';
 const profileCache = new Map<string, ProfileData>();
 const pendingRequests = new Map<string, Promise<ProfileData | null>>();
 
+export const getProfileFromCache = (pubkey: string) => profileCache.get(pubkey);
+export const setProfileToCache = (pubkey: string, data: ProfileData) => profileCache.set(pubkey, data);
+
 // In-memory cache for user posts
 const userPostsCache = new Map<string, NostrEvent[]>();
 

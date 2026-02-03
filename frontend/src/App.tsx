@@ -4,13 +4,14 @@ import Feed from './features/Feed'
 import Search from './features/Search'
 import Messages from './features/Messages'
 import Profile from './features/Profile'
+import BlockedUsers from './features/BlockedUsers'
 import LoadingSpinner from './components/LoadingSpinner'
 import { api } from './services/api'
 import { useEffect } from 'react'
 import { shortenPubkey, generateGradient, getInitials } from './utils/format'
 import { setCurrentUser as setCacheCurrentUser } from './services/profileCache'
 
-type Tab = 'home' | 'search' | 'messages' | 'profile';
+type Tab = 'home' | 'search' | 'messages' | 'profile' | 'blocked';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
@@ -63,6 +64,8 @@ function App() {
         // Retrieve profile if it's the current user, otherwise Profile component fetches it
         const passedProfile = viewProfilePubkey === currentUser?.pubkey ? currentUser.profile : undefined;
         return <Profile key={viewProfilePubkey} pubkey={viewProfilePubkey} profile={passedProfile} />;
+      case 'blocked':
+        return <BlockedUsers />;
       default:
         return <Feed />;
     }
@@ -74,6 +77,7 @@ function App() {
       case 'search': return 'Search';
       case 'messages': return 'Messages';
       case 'profile': return 'Profile';
+      case 'blocked': return 'Blocked Users';
       default: return 'For You';
     }
   };
@@ -134,6 +138,18 @@ function App() {
                 </svg>
               </span>
               <span className="label">Profile</span>
+            </li>
+            <li
+              className={activeTab === 'blocked' ? 'active' : ''}
+              onClick={() => setActiveTab('blocked')}
+            >
+              <span className="icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+                </svg>
+              </span>
+              <span className="label">Blocked</span>
             </li>
           </ul>
         </nav>
@@ -396,12 +412,14 @@ function App() {
           display: flex;
           align-items: center;
         }
-  
+
+        @media (max-width: 1024px) {
           .sidebar-nav li {
             padding: 12px;
             justify-content: center;
           }
 
+          .main-content {
             margin-left: 80px;
           }
         }

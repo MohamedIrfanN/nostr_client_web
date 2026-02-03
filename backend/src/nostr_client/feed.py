@@ -2,7 +2,7 @@ import asyncio
 import time
 from typing import Iterable
 
-from .config import RELAYS, READ_SINCE_SECONDS, READ_LIMIT, AUTHOR_CHUNK_SIZE
+from .config import RELAYS, GLOBAL_FEED_RELAYS, READ_SINCE_SECONDS, READ_LIMIT, AUTHOR_CHUNK_SIZE
 from .relay_manager import RelayManager
 
 
@@ -15,17 +15,18 @@ def _chunk(lst: list[str], size: int):
         yield lst[i : i + size]
 
 
-async def _fetch_from_relay(relay: str, authors: list[str], since_ts: int, limit: int):
+async def _fetch_from_relay(relay: str, authors: list[str] | None, since_ts: int, limit: int):
     sub_id = relay_manager.new_sub_id()
-    req = relay_manager.make_req(
-        sub_id,
-        {
-            "authors": authors,
-            "kinds": [1],
-            "since": since_ts,
-            "limit": limit,
-        },
-    )
+    
+    filter_ = {
+        "kinds": [1],
+        "since": since_ts,
+        "limit": limit,
+    }
+    if authors:
+        filter_["authors"] = authors
+
+    req = relay_manager.make_req(sub_id, filter_)
 
     events: list[dict] = []
     try:
@@ -59,22 +60,27 @@ async def _fetch_from_relay(relay: str, authors: list[str], since_ts: int, limit
 
 
 async def fetch_feed_events(
-    authors: Iterable[str],
+    authors: Iterable[str] | None = None,
     since_seconds: int | None = None,
     limit: int | None = None,
 ) -> list[dict]:
-    author_list = [a for a in authors if a]
-    if not author_list:
-        return []
+    author_list = [a for a in authors if a] if authors else None
 
     since_seconds = READ_SINCE_SECONDS if since_seconds is None else int(since_seconds)
     limit = READ_LIMIT if limit is None else int(limit)
     since_ts = int(time.time()) - max(0, since_seconds)
 
     tasks = []
-    for relay in RELAYS:
-        for author_chunk in _chunk(author_list, AUTHOR_CHUNK_SIZE):
-            tasks.append(_fetch_from_relay(relay, author_chunk, since_ts, limit))
+    # Use dedicated relays for global feed to reduce strain on main relays
+    relay_list = RELAYS if author_list else GLOBAL_FEED_RELAYS
+    
+    for relay in relay_list:
+        if author_list:
+            for author_chunk in _chunk(author_list, AUTHOR_CHUNK_SIZE):
+                tasks.append(_fetch_from_relay(relay, author_chunk, since_ts, limit))
+        else:
+            # Global feed (unfiltered authors)
+            tasks.append(_fetch_from_relay(relay, None, since_ts, limit))
 
     results = await asyncio.gather(*tasks)
     seen: set[str] = set()

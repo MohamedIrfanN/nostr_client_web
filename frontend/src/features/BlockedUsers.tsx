@@ -19,33 +19,39 @@ const BlockedUsers: React.FC = () => {
         setIsLoading(true);
         try {
             const pubkeys = await api.getMyMuted();
-            const initialList = pubkeys.map(pk => ({ pubkey: pk, isLoading: true }));
+            const initialList = pubkeys.map(pk => {
+                const cached = getProfileFromCache(pk);
+                return {
+                    pubkey: pk,
+                    name: cached?.display_name || cached?.name,
+                    picture: cached?.picture,
+                    isLoading: !cached
+                };
+            });
             setBlockedList(initialList);
+            setIsLoading(false); // Stop the main spinner early
 
-            // Fetch profiles in background
-            const enrichedList = await Promise.all(
-                pubkeys.map(async (pk) => {
-                    let profile = getProfileFromCache(pk);
-                    if (!profile) {
-                        try {
-                            profile = await api.getProfile(pk);
-                            if (profile) setProfileToCache(pk, profile);
-                        } catch (e) {
-                            console.error(`Failed to fetch profile for ${pk}`, e);
-                        }
+            // Fetch profiles progressively
+            for (const pk of pubkeys) {
+                if (getProfileFromCache(pk)) continue;
+
+                try {
+                    const profile = await api.getProfile(pk);
+                    if (profile) {
+                        setProfileToCache(pk, profile);
+                        setBlockedList(prev => prev.map(u =>
+                            u.pubkey === pk
+                                ? { ...u, name: profile.display_name || profile.name, picture: profile.picture, isLoading: false }
+                                : u
+                        ));
                     }
-                    return {
-                        pubkey: pk,
-                        name: profile?.display_name || profile?.name,
-                        picture: profile?.picture,
-                        isLoading: false
-                    };
-                })
-            );
-            setBlockedList(enrichedList);
+                } catch (e) {
+                    console.error(`Failed to fetch profile for ${pk}`, e);
+                    setBlockedList(prev => prev.map(u => u.pubkey === pk ? { ...u, isLoading: false } : u));
+                }
+            }
         } catch (error) {
             console.error('Failed to fetch blocked users:', error);
-        } finally {
             setIsLoading(false);
         }
     };

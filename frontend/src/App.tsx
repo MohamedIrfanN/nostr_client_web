@@ -198,9 +198,11 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="page-header">
-          <h1>{getPageTitle()}</h1>
-        </header>
+        {activeTab !== 'home' && (
+          <header className="page-header">
+            <h1>{getPageTitle()}</h1>
+          </header>
+        )}
 
         <div className="content-area">
           {renderContent()}
@@ -298,6 +300,7 @@ function App() {
           margin-left: 230px;
           border-right: 1px solid var(--border-color);
           min-height: 100vh;
+          padding: 0;
         }
 
         .page-header {
@@ -320,7 +323,6 @@ function App() {
         .content-area {
           padding: 0;
           position: relative;
-          height: calc(100vh - 60px);
         }
 
         @media (max-width: 1024px) {

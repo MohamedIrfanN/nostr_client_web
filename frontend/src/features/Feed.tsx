@@ -10,7 +10,8 @@ import { api } from '../services/api';
 import { followingService } from '../services/followingCache';
 
 const Feed: React.FC = () => {
-    const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
+    const [activeTab, setActiveTab] = useState<'following' | 'foryou'>('foryou');
+    const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents('foryou'));
     const [mutedSet, setMutedSet] = useState<Set<string>>(new Set());
     const [followingSet, setFollowingSet] = useState<Set<string>>(followingService.getFollowing());
     const [myPubkey, setMyPubkey] = useState<string>("");
@@ -19,12 +20,15 @@ const Feed: React.FC = () => {
 
     // Infinite Scroll State
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    // Track the oldest timestamp we have requested so far
-    // We'll initialize this dynamically based on the actual oldest event in cache
-    const [oldestFetchedTime, setOldestFetchedTime] = useState<number | null>(null);
-    // Track consecutive empty fetches to prevent infinite searching through sparse history
-    const [consecutiveEmptyFetches, setConsecutiveEmptyFetches] = useState(0);
-    const MAX_EMPTY_FETCHES = 10; // Try up to 5 days (10 * 12h)
+    // Track the oldest timestamp we have requested so far per tab
+    const [oldestForyou, setOldestForyou] = useState<number | null>(null);
+    const [oldestFollowing, setOldestFollowing] = useState<number | null>(null);
+
+    // Track consecutive empty fetches
+    const [emptyForyou, setEmptyForyou] = useState(0);
+    const [emptyFollowing, setEmptyFollowing] = useState(0);
+
+    const MAX_EMPTY_FETCHES = 10;
 
     const eventsEndRef = useRef<HTMLDivElement>(null);
 
@@ -33,50 +37,37 @@ const Feed: React.FC = () => {
         setTimeout(() => setIsLive(false), 2000);
     };
 
-    // Helper to load the next 12-hour block
     const loadMoreHistory = useCallback(() => {
         if (isLoadingMore) return;
 
-        // Stop if we've hit too many empty windows
-        if (consecutiveEmptyFetches >= MAX_EMPTY_FETCHES) {
-            console.log('Reached end of available history (too many empty windows)');
-            return;
-        }
+        const consecutiveEmpty = activeTab === 'foryou' ? emptyForyou : emptyFollowing;
+        if (consecutiveEmpty >= MAX_EMPTY_FETCHES) return;
 
         setIsLoadingMore(true);
 
-        // Calculate 'until' from the oldest event we actually have, not from stale state
-        const cachedEvents = feedCache.getEvents();
+        const cachedEvents = feedCache.getEvents(activeTab);
         let until: number;
 
         if (cachedEvents.length > 0) {
-            // Use the oldest event's timestamp
-            const oldestEvent = cachedEvents[cachedEvents.length - 1]; // Events are sorted desc
-            until = oldestEvent.created_at;
-        } else if (oldestFetchedTime !== null) {
-            // Fallback to state if cache is empty
-            until = oldestFetchedTime;
+            until = cachedEvents[cachedEvents.length - 1].created_at;
         } else {
-            // Ultimate fallback: now - 1 hour
-            until = Math.floor(Date.now() / 1000) - 3600;
+            const lastFetched = activeTab === 'foryou' ? oldestForyou : oldestFollowing;
+            until = lastFetched !== null ? lastFetched : Math.floor(Date.now() / 1000) - 3600;
         }
 
-        const since = until - (12 * 3600); // 12 hours before that
-
-        console.log(`Loading history: ${new Date(since * 1000).toLocaleString()} to ${new Date(until * 1000).toLocaleString()}`);
-
-        const historyEndpoint = `feed?since=${since}&until=${until}`;
+        const since = until - (12 * 3600);
+        const historyEndpoint = `feed?since=${since}&until=${until}&feed_type=${activeTab}`;
 
         let receivedEventCount = 0;
-
-        // Safety timeout in case EOSE never comes
         const safetyTimeout = setTimeout(() => {
-            console.log('History fetch safety timeout');
-            cleanupHistory();
             setIsLoadingMore(false);
-            setOldestFetchedTime(since); // Move pointer anyway
-            // Timeout counts as empty
-            setConsecutiveEmptyFetches(prev => prev + 1);
+            if (activeTab === 'foryou') {
+                setOldestForyou(since);
+                setEmptyForyou(prev => prev + 1);
+            } else {
+                setOldestFollowing(since);
+                setEmptyFollowing(prev => prev + 1);
+            }
         }, 10000);
 
         const cleanupHistory = wsService.connect(
@@ -84,140 +75,97 @@ const Feed: React.FC = () => {
             (message) => {
                 if (message.type === 'feed' && message.event) {
                     const ev = message.event;
-                    if (!feedCache.hasEvent(ev.id)) {
-                        feedCache.addEvent(ev);
-                        setEvents(feedCache.getEvents());
+                    if (!feedCache.hasEvent(activeTab, ev.id)) {
+                        feedCache.addEvent(activeTab, ev);
+                        setEvents(feedCache.getEvents(activeTab));
                         receivedEventCount++;
                     }
                 }
                 if (message.type === 'eose') {
-                    console.log(`History block complete (${receivedEventCount} new events)`);
                     cleanupHistory();
                     clearTimeout(safetyTimeout);
                     setIsLoadingMore(false);
-                    setOldestFetchedTime(since); // Successfully moved pointer
-
-                    // Update empty fetch counter
-                    if (receivedEventCount === 0) {
-                        setConsecutiveEmptyFetches(prev => prev + 1);
-                        console.log(`Empty window ${consecutiveEmptyFetches + 1}/${MAX_EMPTY_FETCHES}`);
+                    if (activeTab === 'foryou') {
+                        setOldestForyou(since);
+                        setEmptyForyou(receivedEventCount === 0 ? prev => prev + 1 : 0);
                     } else {
-                        setConsecutiveEmptyFetches(0); // Reset on success
+                        setOldestFollowing(since);
+                        setEmptyFollowing(receivedEventCount === 0 ? prev => prev + 1 : 0);
                     }
                 }
             },
-            (err) => {
-                console.log('History stream error:', err);
+            () => {
                 cleanupHistory();
                 clearTimeout(safetyTimeout);
                 setIsLoadingMore(false);
-                setConsecutiveEmptyFetches(prev => prev + 1);
             }
         );
-    }, [isLoadingMore, oldestFetchedTime, consecutiveEmptyFetches]);
+    }, [isLoadingMore, activeTab, oldestForyou, oldestFollowing, emptyForyou, emptyFollowing]);
 
-    // Auto-retry on empty window to keep searching back in time
+    // Live Feed Connection
     useEffect(() => {
-        if (consecutiveEmptyFetches > 0 && consecutiveEmptyFetches < MAX_EMPTY_FETCHES && !isLoadingMore) {
-            console.log(`Auto-loading next window (Empty fetch retry ${consecutiveEmptyFetches})...`);
+        if (!isFiltersLoaded) return;
+
+        // Initialize state from cache for this tab
+        setEvents(feedCache.getEvents(activeTab));
+
+        // If cache empty, trigger backfill
+        if (feedCache.getEvents(activeTab).length === 0) {
             loadMoreHistory();
         }
-    }, [consecutiveEmptyFetches, isLoadingMore, loadMoreHistory]);
 
-    // Initial Load & Scroll Listener
-    useEffect(() => {
-        // Fetch filters first
-        Promise.all([
-            api.getMyMuted(),
-            api.getMyFollowing(),
-            api.getMe()
-        ]).then(([muted, following, me]) => {
-            setMutedSet(new Set(muted));
-            setFollowingSet(new Set(following));
-            setMyPubkey(me.pubkey);
-            setIsFiltersLoaded(true);
-
-            // If cache is empty, trigger immediate history load
-            if (feedCache.getEvents().length === 0) {
-                loadMoreHistory();
-            }
-        }).catch(err => {
-            console.error("Failed to load feed filters", err);
-            setIsFiltersLoaded(true);
-        });
-
-        // Only fetch from cache initially, don't clear it to prevent blinking
-        const cached = feedCache.getEvents();
-        if (cached.length > 0) {
-            setEvents(cached);
-        }
-
-        // 1. Live Feed (Last 1 Hour)
+        const endpoint = `feed?feed_type=${activeTab}`;
         const cleanupLive = wsService.connect(
-            'feed',
+            endpoint,
             (message) => {
                 if (message.type === 'feed' && message.event) {
                     const newEvent = message.event;
-                    if (!feedCache.hasEvent(newEvent.id)) {
-                        feedCache.addEvent(newEvent);
-                        // Update state efficiently
+                    if (!feedCache.hasEvent(activeTab, newEvent.id)) {
+                        feedCache.addEvent(activeTab, newEvent);
                         setEvents(prev => {
-                            // Re-sorting inside state update to prevent jitter
-                            const newEvents = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
-                            return newEvents;
+                            const updated = [...prev, newEvent].sort((a, b) => b.created_at - a.created_at);
+                            return updated;
                         });
-                        const isRecent = (Date.now() / 1000) - newEvent.created_at < 120;
-                        if (isRecent) {
+                        if ((Date.now() / 1000) - newEvent.created_at < 120) {
                             setIsLive(true);
                             setTimeout(() => setIsLive(false), 2000);
                         }
                     }
                 }
-            },
-            (error) => {
-                console.error('Live feed WS error:', error);
             }
         );
 
-        // 2. Immediate backfill: Load previous 12 hours after initial feed loads
-        const backfillTimer = setTimeout(() => {
-            // Only trigger if not already loading
-            if (!isLoadingMore) {
-                console.log('Starting backfill safety check...');
-                loadMoreHistory();
-            }
-        }, 3000); // Wait 3 seconds for initial live feed to populate
+        return () => cleanupLive();
+    }, [activeTab, isFiltersLoaded]);
 
-        return () => {
-            cleanupLive();
-            clearTimeout(backfillTimer);
-        };
-    }, []); // Run once on mount
+    // Initial Filter Load
+    useEffect(() => {
+        Promise.all([api.getMyMuted(), api.getMyFollowing(), api.getMe()])
+            .then(([muted, following, me]) => {
+                setMutedSet(new Set(muted));
+                setFollowingSet(new Set(following));
+                setMyPubkey(me.pubkey);
+                setIsFiltersLoaded(true);
+            });
+    }, []);
 
     // Scroll Observer
     useEffect(() => {
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0].isIntersecting) {
-                    loadMoreHistory();
-                }
+                if (entries[0].isIntersecting) loadMoreHistory();
             },
-            { threshold: 0.1, rootMargin: '100px' } // Trigger earlier (100px before bottom) for smoothness
+            { threshold: 0.1, rootMargin: '100px' }
         );
-
-        if (eventsEndRef.current) {
-            observer.observe(eventsEndRef.current);
-        }
-
+        if (eventsEndRef.current) observer.observe(eventsEndRef.current);
         return () => observer.disconnect();
     }, [loadMoreHistory]);
 
-    // Wait for filters before rendering cache to avoid "ghost" posts
     if (!isFiltersLoaded && events.length === 0) {
         return (
             <div className="feed-view">
                 <div className="loading-state">
-                    <LoadingSpinner label="Loading feed..." size="large" />
+                    <LoadingSpinner label="Loading..." size="large" />
                 </div>
             </div>
         );
@@ -225,6 +173,23 @@ const Feed: React.FC = () => {
 
     return (
         <div className="feed-view">
+            <div className="feed-tabs">
+                <button
+                    className={`feed-tab ${activeTab === 'foryou' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('foryou')}
+                >
+                    For you
+                    {activeTab === 'foryou' && <div className="tab-indicator" />}
+                </button>
+                <button
+                    className={`feed-tab ${activeTab === 'following' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('following')}
+                >
+                    Following
+                    {activeTab === 'following' && <div className="tab-indicator" />}
+                </button>
+            </div>
+
             {isLive && (
                 <div className="live-indicator">
                     <span className="pulse"></span>
@@ -234,31 +199,75 @@ const Feed: React.FC = () => {
 
             <CreatePost onPostCreated={handlePostCreated} />
 
-            {/* Main Loading State (Initial only) */}
-            {events.length === 0 && (
+            {events.length === 0 && isLoadingMore && (
                 <div className="loading-state">
-                    <LoadingSpinner label="Loading feed..." size="large" />
+                    <LoadingSpinner size="large" />
                 </div>
             )}
 
             <div className="posts-list">
                 {events
-                    .filter(ev =>
-                        !mutedSet.has(ev.pubkey) && // Hide blocked
-                        (followingSet.has(ev.pubkey) || ev.pubkey === myPubkey) // Hide unfollowed (except self)
-                    )
+                    .filter(ev => {
+                        const isMuted = mutedSet.has(ev.pubkey);
+                        if (isMuted) return false;
+                        if (activeTab === 'following') {
+                            return followingSet.has(ev.pubkey) || ev.pubkey === myPubkey;
+                        }
+                        return true;
+                    })
                     .map((event) => (
                         <PostCard key={event.id} event={event} />
                     ))}
             </div>
 
-            {/* Infinite scroll trigger - Invisible/Silent */}
             <div ref={eventsEndRef} className="scroll-trigger" style={{ padding: '20px 0', minHeight: '60px' }} />
 
             <style>{`
         .feed-view {
           background: var(--bg-color);
-          min-height: 100vh; /* Ensure full height to push footer down */
+          min-height: 100vh;
+        }
+
+        .feed-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            background: var(--bg-color);
+            backdrop-filter: blur(10px);
+            z-index: 90;
+        }
+
+        .feed-tab {
+            flex: 1;
+            padding: 16px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            position: relative;
+            transition: color 0.2s;
+        }
+
+        .feed-tab:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .feed-tab.active {
+            color: var(--text-primary);
+        }
+
+        .tab-indicator {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 56px;
+            height: 4px;
+            background: var(--accent-color);
+            border-radius: 2px;
         }
 
         .loading-state {
@@ -288,7 +297,6 @@ const Feed: React.FC = () => {
           gap: 8px;
           box-shadow: var(--shadow-md);
           z-index: 100;
-          animation: slideIn 0.3s ease;
         }
 
         .pulse {
@@ -302,11 +310,6 @@ const Feed: React.FC = () => {
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.5; transform: scale(1.2); }
-        }
-
-        @keyframes slideIn {
-          from { transform: translateY(-20px); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
         }
       `}</style>
         </div>

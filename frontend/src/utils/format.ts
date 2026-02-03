@@ -15,6 +15,7 @@ export function formatRelativeTime(timestamp: number): string {
     const diffMonth = Math.floor(diffDay / 30);
     const diffYear = Math.floor(diffDay / 365);
 
+    if (diffSec < 1) return 'now';
     if (diffSec < 60) return `${diffSec}s`;
     if (diffMin < 60) return `${diffMin}m`;
     if (diffHour < 24) return `${diffHour}h`;

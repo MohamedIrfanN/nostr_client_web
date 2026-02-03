@@ -59,37 +59,53 @@ async def fetch_published_mute_set(my_pubkey: str) -> set[str]:
         )
 
         best = None
+        ws = None
         try:
-            async with relay_manager.connect(relay) as ws:
-                await relay_manager.send(ws, req)
+            # Use connect_with_timeout to avoid hanging forever on down relays
+            ws = await relay_manager.connect_with_timeout(relay, timeout_sec=3.0)
+            await relay_manager.send(ws, req)
 
-                while True:
-                    try:
-                        msg = await relay_manager.recv_json(ws, timeout=RECV_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        break
+            while True:
+                try:
+                    msg = await relay_manager.recv_json(ws, timeout=RECV_TIMEOUT)
+                except asyncio.TimeoutError:
+                    break
 
-                    if not msg:
-                        continue
+                if not msg:
+                    continue
 
-                    if msg[0] == "EOSE":
-                        break
+                if msg[0] == "EOSE":
+                    break
 
-                    if msg[0] != "EVENT":
-                        continue
+                if msg[0] != "EVENT":
+                    continue
 
-                    ev = msg[2]
-                    if best is None or int(ev.get("created_at", 0)) > int(best.get("created_at", 0)):
-                        best = ev
-        except Exception:
+                ev = msg[2]
+                if best is None or int(ev.get("created_at", 0)) > int(best.get("created_at", 0)):
+                    best = ev
+        except Exception as e:
+            # print(f"[MUTE] Error fetching from {relay}: {e}")
             return None
+        finally:
+            if ws:
+                await ws.close()
 
         return best
 
-    results = await asyncio.gather(*(_from_relay(r) for r in RELAYS))
-    events = [e for e in results if e]
+    try:
+        # Give the whole thing a 5s total limit
+        results = await asyncio.wait_for(
+            asyncio.gather(*(_from_relay(r) for r in RELAYS)),
+            timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        results = []
+
+    events = [e for e in results if e] if results else []
 
     if not events:
+        # Still return a set and cache it (even if empty) to stop spinning
+        _MUTE_LIST_CACHE[my_pubkey] = set()
         return set()
 
     newest = max(events, key=lambda e: int(e.get("created_at", 0)))

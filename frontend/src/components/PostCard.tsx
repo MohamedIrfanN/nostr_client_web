@@ -46,30 +46,46 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
   const [replyToPubkey, setReplyToPubkey] = useState<string | null>(null);
   const [replyToProfile, setReplyToProfile] = useState<ProfileData | null>(null);
 
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
   useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.1, rootMargin: '200px' }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible) return;
+
     const fetchProfile = async () => {
       try {
-        // Use cached profile fetching
         const profileData = await getProfileWithCache(event.pubkey, api.getProfile);
-        if (profileData) {
-          setProfile(profileData);
-        }
+        if (profileData) setProfile(profileData);
       } catch (err) {
         console.error('Failed to fetch profile:', err);
       }
     };
     fetchProfile();
 
-    // Check if it's a reply and extract the pubkey to show "Replying to"
     const pTags = event.tags.filter(t => t[0] === 'p');
     if (pTags.length > 0) {
-      // Prefer the 'reply' marker if standard NIP-10 tags are present, 
-      // otherwise take the first one (usually the one being replied to)
       const replyTag = pTags.find(t => t[3] === 'reply') || pTags[0];
       const targetPubkey = replyTag[1];
       setReplyToPubkey(targetPubkey);
 
-      // Fetch the profile for the person being replied to
       const fetchReplyProfile = async () => {
         try {
           const profileData = await getProfileWithCache(targetPubkey, api.getProfile);
@@ -80,11 +96,12 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
       };
       fetchReplyProfile();
     }
+  }, [isVisible, event.pubkey]);
 
-    // Check if this post is already liked
+  useEffect(() => {
     const likedPosts = getLikedPosts();
     setIsLiked(likedPosts.has(event.id));
-  }, [event.pubkey, event.id]);
+  }, [event.id]);
 
   const handleLike = async () => {
     if (isLiking) return;
@@ -132,7 +149,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
   };
 
   return (
-    <div className="post-card">
+    <div className="post-card" ref={cardRef}>
       <div className="post-header">
         <div
           className="post-avatar"

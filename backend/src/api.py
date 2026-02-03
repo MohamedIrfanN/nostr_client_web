@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .nostr_client.utils import get_privkey_from_env, pubkey_xonly_hex, normalize_pubkey_input
-from .nostr_client.config import RELAYS, SEARCH_RELAYS, AUTHOR_CHUNK_SIZE
+from .nostr_client.config import RELAYS, GLOBAL_FEED_RELAYS, SEARCH_RELAYS, AUTHOR_CHUNK_SIZE
 from .nostr_client.events import (
     build_signed_text_note,
     build_signed_contacts_event,
@@ -241,10 +241,13 @@ async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], ev
 
 
 @app.get("/feed")
-async def get_feed(limit: int | None = None, since_seconds: int | None = None):
-    _, my_pubkey = _get_keys()
-    follows = await fetch_following_all_relays(my_pubkey)
-    authors = list(follows | {my_pubkey})
+async def get_feed(limit: int | None = None, since_seconds: int | None = None, until: int | None = None, feed_type: str = "following"):
+    authors = None
+    if feed_type == "following":
+        _, my_pubkey = _get_keys()
+        follows = await fetch_following_all_relays(my_pubkey)
+        authors = list(follows | {my_pubkey})
+    
     events = await fetch_feed_events(authors, since_seconds=since_seconds, limit=limit)
     return {"count": len(events), "events": events}
 
@@ -522,10 +525,12 @@ async def health():
 
 
 @app.websocket("/ws/feed")
-async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | None = None):
-    _, my_pubkey = _get_keys()
-    follows = await fetch_following_all_relays(my_pubkey)
-    authors = list(follows | {my_pubkey})
+async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | None = None, feed_type: str = "following"):
+    authors = None
+    if feed_type == "following":
+        _, my_pubkey = _get_keys()
+        follows = await fetch_following_all_relays(my_pubkey)
+        authors = list(follows | {my_pubkey})
     
     # Default to 1 hour ago if not specified
     if since is None:
@@ -535,25 +540,28 @@ async def ws_feed(websocket: WebSocket, since: int | None = None, until: int | N
         since = int(since)
 
     # Debug logging
-    print(f"[FEED] Fetching feed for {len(authors)} authors")
-    print(f"[FEED] Time range: {since} ({datetime.fromtimestamp(since)}) to {until if until else 'now'} ({datetime.fromtimestamp(until) if until else 'now'})")
+    print(f"[FEED] Fetching {feed_type} feed")
     
     reqs_by_relay: dict[str, list[list]] = {}
-    for relay in RELAYS:
+    relay_list = RELAYS if authors else GLOBAL_FEED_RELAYS
+    
+    for relay in relay_list:
         reqs = []
-        for author_chunk in _chunk(authors, AUTHOR_CHUNK_SIZE):
+        if authors:
+            for author_chunk in _chunk(authors, AUTHOR_CHUNK_SIZE):
+                sub_id = relay_manager.new_sub_id()
+                filter_ = {"authors": author_chunk, "kinds": [1], "since": since}
+                if until is not None:
+                    filter_["until"] = int(until)
+                reqs.append(relay_manager.make_req(sub_id, filter_))
+        else:
+            # Global feed
             sub_id = relay_manager.new_sub_id()
-            
-            filter_ = {"authors": author_chunk, "kinds": [1], "since": since}
+            filter_ = {"kinds": [1], "since": since}
             if until is not None:
                 filter_["until"] = int(until)
-
-            reqs.append(
-                relay_manager.make_req(
-                    sub_id,
-                    filter_,
-                )
-            )
+            reqs.append(relay_manager.make_req(sub_id, filter_))
+            
         reqs_by_relay[relay] = reqs
     
     print(f"[FEED] Sending {sum(len(r) for r in reqs_by_relay.values())} subscription requests across {len(RELAYS)} relays")

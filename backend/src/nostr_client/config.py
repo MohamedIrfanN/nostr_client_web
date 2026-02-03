@@ -11,6 +11,13 @@ RELAYS = [
     "ws://localhost:8888"
 ]
 
+GLOBAL_FEED_RELAYS = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://relay.nos.social",
+]
+
 # Search-capable relays (NIP-50)
 # Ordered by reliability - will query all and combine results
 SEARCH_RELAYS = [

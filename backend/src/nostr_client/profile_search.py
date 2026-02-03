@@ -8,7 +8,7 @@ from .utils import normalize_pubkey_input
 
 
 relay_manager = RelayManager()
-def _parse_kind0_content(ev: dict) -> dict:
+def parse_kind0_content(ev: dict) -> dict:
     """
     kind:0 content is JSON string with fields like:
     name, display_name, about, picture, nip05, lud16...
@@ -58,7 +58,7 @@ async def fetch_profile_by_pubkey(pubkey_input: str, timeout_sec: float = 3.0) -
         return None
 
     best = max(events, key=lambda e: int(e.get("created_at", 0)))
-    profile = _parse_kind0_content(best)
+    profile = parse_kind0_content(best)
     profile["_pubkey"] = pubkey
     profile["_created_at"] = int(best.get("created_at", 0))
     return profile
@@ -113,7 +113,7 @@ async def search_profiles_by_name(
                     if not pk:
                         continue
 
-                    prof = _parse_kind0_content(ev)
+                    prof = parse_kind0_content(ev)
                     if not _matches(prof):
                         continue
 

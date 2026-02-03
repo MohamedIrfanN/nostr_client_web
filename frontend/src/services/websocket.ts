@@ -2,11 +2,12 @@ import type { NostrEvent } from './api';
 
 const WS_BASE_URL = 'ws://localhost:8000';
 
-export type WebSocketMessageType = 'feed' | 'dm' | 'notify' | 'ping' | 'eose' | 'relationship' | 'stats';
+export type WebSocketMessageType = 'feed' | 'dm' | 'notify' | 'ping' | 'eose' | 'relationship' | 'stats' | 'profile';
 
 export interface WebSocketMessage {
     type: WebSocketMessageType;
     event?: NostrEvent;
+    profile?: any; // Parsed profile object
     is_following?: boolean;
     target_pubkey?: string;
     following?: number;

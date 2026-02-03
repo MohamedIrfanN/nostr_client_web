@@ -126,9 +126,9 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
   const gradient = generateGradient(event.pubkey);
   const initials = getInitials(profile?.display_name || profile?.name || event.pubkey);
 
-  const navigateToProfile = (e: React.MouseEvent, pubkey: string) => {
+  const navigateToProfile = (e: React.MouseEvent, pubkey: string, profileData?: ProfileData | null) => {
     e.stopPropagation();
-    (window as any).navigateToProfile?.(pubkey);
+    (window as any).navigateToProfile?.(pubkey, profileData);
   };
 
   return (
@@ -137,7 +137,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         <div
           className="post-avatar"
           style={{ background: avatarUrl ? 'transparent' : gradient, cursor: 'pointer' }}
-          onClick={(e) => navigateToProfile(e, event.pubkey)}
+          onClick={(e) => navigateToProfile(e, event.pubkey, profile)}
         >
           {avatarUrl ? (
             <img
@@ -155,14 +155,14 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
               className="post-author"
               title={event.pubkey}
               style={{ cursor: 'pointer' }}
-              onClick={(e) => navigateToProfile(e, event.pubkey)}
+              onClick={(e) => navigateToProfile(e, event.pubkey, profile)}
             >
               {displayName}
             </span>
             <span
               className="post-pubkey"
               style={{ cursor: 'pointer' }}
-              onClick={(e) => navigateToProfile(e, event.pubkey)}
+              onClick={(e) => navigateToProfile(e, event.pubkey, profile)}
             >
               @{formatPubkey(event.pubkey)}
             </span>
@@ -172,7 +172,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
             <div className="post-reply-to">
               Replying to <span
                 className="reply-name"
-                onClick={(e) => navigateToProfile(e, replyToPubkey)}
+                onClick={(e) => navigateToProfile(e, replyToPubkey, replyToProfile)}
               >
                 @{replyToProfile?.display_name || replyToProfile?.name || formatPubkey(replyToPubkey)}
               </span>
@@ -232,17 +232,19 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
         </button>
       </div>
 
-      {showCommentModal && (
-        <CommentModal
-          post={event}
-          authorName={displayName}
-          authorAvatar={avatarUrl || undefined}
-          onClose={() => setShowCommentModal(false)}
-          onCommentPosted={() => {
-            // Optionally refresh feed or show success message
-          }}
-        />
-      )}
+      {
+        showCommentModal && (
+          <CommentModal
+            post={event}
+            authorName={displayName}
+            authorAvatar={avatarUrl || undefined}
+            onClose={() => setShowCommentModal(false)}
+            onCommentPosted={() => {
+              // Optionally refresh feed or show success message
+            }}
+          />
+        )
+      }
 
       <style>{`
         .post-card {
@@ -389,7 +391,7 @@ const PostCard: React.FC<PostCardProps> = ({ event }) => {
           margin-left: auto;
         }
       `}</style>
-    </div>
+    </div >
   );
 };
 

@@ -4,6 +4,9 @@ import { generateGradient, getInitials, formatPubkey } from '../utils/format';
 import { getCurrentUser } from '../services/profileCache';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { wsService } from '../services/websocket';
+import { setProfileToCache } from '../services/profileCache';
+
 const Search: React.FC = () => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
@@ -14,8 +17,17 @@ const Search: React.FC = () => {
   const [followingSet, setFollowingSet] = useState<Set<string>>(new Set());
   const [hoveringUnfollow, setHoveringUnfollow] = useState<string | null>(null);
 
+  const searchCleanupRef = React.useRef<(() => void) | null>(null);
+
   const currentUser = getCurrentUser();
   const myPubkey = currentUser?.pubkey;
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (searchCleanupRef.current) searchCleanupRef.current();
+    };
+  }, []);
 
   // Fetch initial following list
   useEffect(() => {
@@ -26,26 +38,86 @@ const Search: React.FC = () => {
     }
   }, [myPubkey]);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  // Auto-search logic
+  useEffect(() => {
+    const q = query.trim();
+
+    // Reset if query is too short
+    if (q.length < 2) {
+      setResults([]);
+      setHasSearched(false);
+      setLoading(false);
+      if (searchCleanupRef.current) {
+        searchCleanupRef.current();
+        searchCleanupRef.current = null;
+      }
+      return;
+    }
+
+    // Debounce: wait 500ms after last keystroke
+    const timer = setTimeout(() => {
+      performSearch(q);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const performSearch = (q: string) => {
+    // Stop any existing search
+    if (searchCleanupRef.current) searchCleanupRef.current();
+
+    setResults([]);
     setLoading(true);
     setHasSearched(true);
-    try {
-      const response = await api.searchUsers(query);
-      if (response.profile) {
-        setResults(response.profile ? [response.profile] : []);
-      } else if (response.results) {
-        setResults(response.results);
-      } else {
-        setResults([]);
+
+    const cleanup = wsService.connect(
+      `search?q=${encodeURIComponent(q)}`,
+      (message) => {
+        if (message.type === 'profile' && message.profile) {
+          const newProfile = message.profile;
+          const pk = newProfile.pubkey || newProfile._pubkey;
+
+          // Warm the global profile cache immediately so Profile view can find it
+          setProfileToCache(pk, newProfile);
+
+          setResults(prev => {
+            const index = prev.findIndex(p => (p.pubkey || p._pubkey) === pk);
+
+            if (index !== -1) {
+              const existing = prev[index];
+              const existingTs = existing._created_at || existing.created_at || 0;
+              const newTs = newProfile._created_at || newProfile.created_at || 0;
+
+              if (newTs > existingTs) {
+                const next = [...prev];
+                next[index] = newProfile;
+                return next;
+              }
+              return prev;
+            }
+            return [...prev, newProfile];
+          });
+        }
+        if (message.type === 'eose') {
+          setLoading(false);
+          cleanup();
+        }
+      },
+      (err) => {
+        console.error('Search WS error:', err);
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('Search failed:', err);
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
+    );
+
+    searchCleanupRef.current = cleanup;
+
+    // Safety timeout (10s)
+    setTimeout(() => {
+      if (searchCleanupRef.current === cleanup) {
+        setLoading(false);
+        cleanup();
+      }
+    }, 10000);
   };
 
   const handleImageError = (pubkey: string) => {
@@ -84,33 +156,18 @@ const Search: React.FC = () => {
 
   return (
     <div className="search-view">
-      <form onSubmit={handleSearch} className="search-form">
+      <div className="search-form">
         <input
           type="text"
           placeholder="Search for names or pubkeys..."
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setHasSearched(false);
-          }}
+          onChange={(e) => setQuery(e.target.value)}
           className="search-input glass"
+          autoFocus
         />
-        <button type="submit" disabled={loading} className="search-btn">
-          {loading ? <LoadingSpinner size="small" color="white" padding="0" /> : 'Search'}
-        </button>
-      </form>
+      </div>
 
       <div className="search-results">
-        {loading && (
-          <div className="loading-results">
-            <LoadingSpinner label="Searching for profiles..." size="medium" />
-          </div>
-        )}
-
-        {!loading && hasSearched && results.length === 0 && (
-          <div className="no-results">No profiles found for "{query}"</div>
-        )}
-
         {results.map((profile) => {
           const displayName = profile.display_name || profile.name || 'Anonymous';
           const pubkey = profile._pubkey || profile.pubkey;
@@ -127,7 +184,7 @@ const Search: React.FC = () => {
             <div
               key={pubkey}
               className="profile-card card glass"
-              onClick={() => (window as any).navigateToProfile?.(pubkey)}
+              onClick={() => (window as any).navigateToProfile?.(pubkey, profile)}
               style={{ cursor: 'pointer' }}
             >
               <div
@@ -176,6 +233,16 @@ const Search: React.FC = () => {
             </div>
           );
         })}
+
+        {loading && (
+          <div className="loading-results-bottom">
+            <LoadingSpinner label="Seeking more profiles..." size="small" />
+          </div>
+        )}
+
+        {!loading && hasSearched && results.length === 0 && query.trim().length >= 2 && (
+          <div className="no-results">No profiles found for "{query}"</div>
+        )}
       </div>
 
       <style>{`
@@ -201,20 +268,21 @@ const Search: React.FC = () => {
           outline: none;
         }
 
-        .search-btn {
-          background: var(--accent-color);
-          color: white;
-          padding: 0 24px;
-          border-radius: 24px;
-          font-weight: 600;
-          border: none;
-          cursor: pointer;
-          font-size: 14px;
-          transition: opacity 0.2s;
+        .loading-results-bottom {
+          display: flex;
+          justify-content: center;
+          padding: 30px 0;
+          color: var(--text-muted);
+          border-top: 1px solid var(--border-color);
+          margin-top: 10px;
         }
 
-        .search-btn:hover {
-          opacity: 0.9;
+        .no-results {
+          text-align: center;
+          padding: 60px 20px;
+          color: var(--text-muted);
+          background: rgba(255, 255, 255, 0.02);
+          border-radius: 12px;
         }
 
         .search-results {

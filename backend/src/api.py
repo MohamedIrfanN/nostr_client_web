@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .nostr_client.utils import get_privkey_from_env, pubkey_xonly_hex, normalize_pubkey_input
-from .nostr_client.config import RELAYS, AUTHOR_CHUNK_SIZE
+from .nostr_client.config import RELAYS, SEARCH_RELAYS, AUTHOR_CHUNK_SIZE
 from .nostr_client.events import (
     build_signed_text_note,
     build_signed_contacts_event,
@@ -17,7 +17,7 @@ from .nostr_client.events import (
 )
 from .nostr_client.publish import publish_to_relays
 from .nostr_client.contacts import fetch_following_all_relays, fetch_followers_all_relays, apply_follow, apply_unfollow, update_following_cache, start_contact_watcher
-from .nostr_client.profile_search import fetch_profile_by_pubkey, search_profiles_by_name
+from .nostr_client.profile_search import fetch_profile_by_pubkey, search_profiles_by_name, parse_kind0_content
 from .nostr_client.dm_subscribe import fetch_dm_inbox_7d, fetch_dm_history_7d, _decrypt, _extract_partner
 from .nostr_client.mute_list import fetch_published_mute_set, publish_mute_set, update_mute_cache, start_mute_watcher
 from .nostr_client.feed import fetch_feed_events
@@ -81,18 +81,21 @@ def _chunk(lst: list[str], size: int):
         yield lst[i : i + size]
 
 
-async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue, seen: set[str], event_type: str):
+async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue, seen: set[str], event_type: str, search_query: str | None = None):
+    eose_expected = len(reqs)
+    eose_sent = 0
     try:
         async with relay_manager.connect(relay) as ws:
             for req in reqs:
                 await relay_manager.send(ws, req)
 
-            while True:
+            while eose_sent < eose_expected:
                 msg = await relay_manager.recv_json(ws)
                 if not msg:
                     continue
                 if msg[0] == "EOSE":
                     await queue.put({"type": "_eose_part"})
+                    eose_sent += 1
                     continue
 
                 if msg[0] != "EVENT":
@@ -115,11 +118,44 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
                     ev["from_me"] = direction == "OUT"
                     ev["partner_pubkey"] = partner
 
+                # If it's a profile (kind 0), parse it for the frontend
+                if event_type == "profile" and ev.get("kind") == 0:
+                    prof = parse_kind0_content(ev)
+                    
+                    # Apply relevance filter if search_query is provided
+                    if search_query:
+                        # Split query into tokens for multi-word matching
+                        tokens = [t.lower() for t in search_query.split() if t.strip()]
+                        
+                        # Concatenate all searchable fields
+                        searchable_text = " ".join([
+                            str(prof.get("name", "")),
+                            str(prof.get("display_name", "")),
+                            str(prof.get("nip05", "")),
+                            str(prof.get("about", ""))
+                        ]).lower()
+                        
+                        # Every token must be present somewhere in the profile
+                        matches = all(token in searchable_text for token in tokens)
+                        
+                        if not matches:
+                            continue
+
+                    prof["pubkey"] = ev.get("pubkey")
+                    prof["_created_at"] = ev.get("created_at")
+                    await queue.put({"type": "profile", "profile": prof})
+                    continue
+
                 await queue.put({"type": event_type, "event": ev})
     except asyncio.CancelledError:
         raise
     except Exception:
-        return
+        pass
+    finally:
+        # Ensure we always signal completion for all requests so the sender doesn't wait forever
+        while eose_sent < eose_expected:
+            await queue.put({"type": "_eose_part"})
+            eose_sent += 1
 
 
 
@@ -133,32 +169,36 @@ async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: 
     while True:
         payload = await queue.get()
         
-        if payload.get("type") == "_eose_part":
-            eose_count += 1
-            # Only send final EOSE if we haven't already and we hit the target
-            if not eose_sent and eose_count >= expected_eose:
-                await websocket.send_json({"type": "eose"})
-                eose_sent = True
-            continue
-        
-        # Check backend mute filter
-        ev = payload.get("event")
-        if ev:
-            author = ev.get("pubkey")
+        try:
+            if payload.get("type") == "_eose_part":
+                eose_count += 1
+                # Only send final EOSE if we haven't already and we hit the target
+                if not eose_sent and eose_count >= expected_eose:
+                    await websocket.send_json({"type": "eose"})
+                    eose_sent = True
+                continue
             
-            if author in blocked_set:
-                # 1. Strict Mode (Feed): Block EVERYTHING
-                if not allow_muted_history:
-                    # print(f"[WS] 🚫 Strict blocking event from {author[:8]}")
-                    continue
+            # Check backend mute filter
+            ev = payload.get("event")
+            if ev:
+                author = ev.get("pubkey")
                 
-                # 2. Relaxed Mode (DM): Block only LIVE new events
-                created_at = ev.get("created_at", 0)
-                if created_at > connection_start:
-                    print(f"[WS] 🚫 Blocking live event from muted user {author[:8]}")
-                    continue
-            
-        await websocket.send_json(payload)
+                if author in blocked_set:
+                    # 1. Strict Mode (Feed): Block EVERYTHING
+                    if not allow_muted_history:
+                        # print(f"[WS] 🚫 Strict blocking event from {author[:8]}")
+                        continue
+                    
+                    # 2. Relaxed Mode (DM): Block only LIVE new events
+                    created_at = ev.get("created_at", 0)
+                    if created_at > connection_start:
+                        print(f"[WS] 🚫 Blocking live event from muted user {author[:8]}")
+                        continue
+                
+            await websocket.send_json(payload)
+        except (RuntimeError, WebSocketDisconnect):
+            # Client disconnected or socket closed, exit the sender task
+            break
 
 
 async def _ws_keepalive(websocket: WebSocket, interval: float = 20.0):
@@ -170,13 +210,13 @@ async def _ws_keepalive(websocket: WebSocket, interval: float = 20.0):
             break
 
 
-async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str, blocked_set: set[str] | None = None, allow_muted_history: bool = True):
+async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str, blocked_set: set[str] | None = None, allow_muted_history: bool = True, search_query: str | None = None):
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue()
     seen: set[str] = set()
 
     tasks = [
-        asyncio.create_task(_relay_stream_task(relay, reqs, queue, seen, event_type))
+        asyncio.create_task(_relay_stream_task(relay, reqs, queue, seen, event_type, search_query=search_query))
         for relay, reqs in reqs_by_relay.items()
     ]
     
@@ -772,3 +812,81 @@ async def ws_stats(websocket: WebSocket, pubkey: str):
         for t in tasks:
             t.cancel()
         keepalive.cancel()
+
+@app.websocket("/ws/search")
+async def ws_search(websocket: WebSocket, q: str):
+    q_stripped = q.strip()
+    if not q_stripped:
+        await websocket.close(code=4000)
+        return
+
+    filter_args = {"kinds": [0], "limit": 50}
+    
+    search_term = None
+    # Check if q looks like a pubkey (npub or hex)
+    if q_stripped.startswith("npub1") or (len(q_stripped) == 64 and all(c in '0123456789abcdefABCDEF' for c in q_stripped)):
+        try:
+            normalized_pubkey = normalize_pubkey_input(q_stripped)
+            filter_args["authors"] = [normalized_pubkey]
+        except:
+            filter_args["search"] = q_stripped
+            search_term = q_stripped
+    else:
+        filter_args["search"] = q_stripped
+        search_term = q_stripped
+
+    reqs_by_relay: dict[str, list[list]] = {}
+    target_relays = SEARCH_RELAYS if search_term else RELAYS
+    
+    for relay in target_relays:
+        sub_id = relay_manager.new_sub_id()
+        reqs_by_relay[relay] = [
+            relay_manager.make_req(
+                sub_id,
+                filter_args,
+            )
+        ]
+
+    await _run_ws(websocket, reqs_by_relay, event_type="profile", search_query=search_term)
+
+
+@app.websocket("/ws/users/{pubkey}/contacts")
+async def ws_contacts(websocket: WebSocket, pubkey: str, type: str = "following"):
+    """
+    Stream profile metadata for the user's followers or following.
+    type must be either 'followers' or 'following'.
+    """
+    try:
+        norm_pubkey = normalize_pubkey_input(pubkey)
+    except:
+        await websocket.close(code=4000)
+        return
+
+    if type == "followers":
+        authors_list = list(await fetch_followers_all_relays(norm_pubkey))
+    else:
+        authors_list = list(await fetch_following_all_relays(norm_pubkey))
+
+    print(f"[CONTACTS_WS] Streaming {len(authors_list)} profiles for {type} of {norm_pubkey[:8]}")
+
+    if not authors_list:
+        await websocket.accept()
+        await websocket.send_json({"type": "eose"})
+        await websocket.close()
+        return
+
+    reqs_by_relay: dict[str, list[list]] = {}
+    for relay in RELAYS:
+        reqs = []
+        # Chunk the authors to stay within relay limits
+        for author_chunk in _chunk(authors_list, AUTHOR_CHUNK_SIZE):
+            sub_id = relay_manager.new_sub_id()
+            reqs.append(
+                relay_manager.make_req(
+                    sub_id,
+                    {"authors": author_chunk, "kinds": [0]}
+                )
+            )
+        reqs_by_relay[relay] = reqs
+
+    await _run_ws(websocket, reqs_by_relay, event_type="profile")

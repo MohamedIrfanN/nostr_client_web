@@ -9,6 +9,7 @@ import PostCard from '../components/PostCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { generateGradient, getInitials, formatPubkey } from '../utils/format';
 import { nip19 } from 'nostr-tools';
+import UserListModal from '../components/UserListModal';
 
 interface ProfileProps {
     pubkey: string;
@@ -42,6 +43,10 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     });
     const [isHoveringFollow, setIsHoveringFollow] = useState(false);
     const [followLoading, setFollowLoading] = useState(false);
+
+    // Modal state for followers/following
+    const [showUserListModal, setShowUserListModal] = useState(false);
+    const [userListModalType, setUserListModalType] = useState<'followers' | 'following'>('following');
 
     // Initial Profile Metadata Load
     useEffect(() => {
@@ -417,10 +422,22 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                         </div>
 
                         <div className="profile-stats">
-                            <div className="stat">
+                            <div
+                                className="stat clickable"
+                                onClick={() => {
+                                    setUserListModalType('following');
+                                    setShowUserListModal(true);
+                                }}
+                            >
                                 <strong>{stats ? stats.following_count : '-'}</strong> <span>Following</span>
                             </div>
-                            <div className="stat">
+                            <div
+                                className="stat clickable"
+                                onClick={() => {
+                                    setUserListModalType('followers');
+                                    setShowUserListModal(true);
+                                }}
+                            >
                                 <strong>{stats ? stats.followers_count : '-'}</strong> <span>Followers</span>
                             </div>
                         </div>
@@ -470,6 +487,16 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                     </div>
                 )}
             </div>
+
+            {showUserListModal && (
+                <UserListModal
+                    pubkey={pubkey}
+                    userName={displayName}
+                    type={userListModalType}
+                    expectedCount={userListModalType === 'following' ? stats?.following_count : stats?.followers_count}
+                    onClose={() => setShowUserListModal(false)}
+                />
+            )}
 
             <style>{`
         .profile-page {
@@ -619,6 +646,15 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             font-size: 14px;
         }
 
+        .stat.clickable {
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .stat.clickable:hover {
+            opacity: 0.7;
+        }
+
         .stat strong {
             color: var(--text-primary);
             margin-right: 4px;
@@ -674,7 +710,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             color: var(--text-muted);
         }
       `}</style>
-        </div>
+        </div >
     );
 };
 

@@ -17,11 +17,13 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [currentUser, setCurrentUser] = useState<{ pubkey: string; profile?: any } | null>(null);
   const [viewProfilePubkey, setViewProfilePubkey] = useState<string | null>(null);
+  const [transientProfile, setTransientProfile] = useState<any>(null);
 
   // Expose navigation function globally (temporary but effective solution)
   useEffect(() => {
-    (window as any).navigateToProfile = (pubkey: string) => {
+    (window as any).navigateToProfile = (pubkey: string, profile?: any) => {
       setViewProfilePubkey(pubkey);
+      setTransientProfile(profile || null);
       setActiveTab('profile');
     };
   }, []);
@@ -30,6 +32,7 @@ function App() {
   const handleProfileTabClick = () => {
     if (currentUser) {
       setViewProfilePubkey(currentUser.pubkey);
+      setTransientProfile(currentUser.profile || null);
       setActiveTab('profile');
     }
   };
@@ -43,6 +46,7 @@ function App() {
         // Default to showing own profile if none selected
         if (!viewProfilePubkey) {
           setViewProfilePubkey(me.pubkey);
+          setTransientProfile(me.profile || null);
         }
       } catch (err) {
         console.error('Failed to fetch current user:', err);
@@ -61,8 +65,16 @@ function App() {
         return <Messages />;
       case 'profile':
         if (!viewProfilePubkey) return <LoadingSpinner label="Identifying user..." size="large" />;
-        // Retrieve profile if it's the current user, otherwise Profile component fetches it
-        const passedProfile = viewProfilePubkey === currentUser?.pubkey ? currentUser.profile : undefined;
+
+        // Priority: 
+        // 1. Explicit transient profile passed via navigation
+        // 2. Current user's profile if it matches
+        // 3. Let Profile component fetch it
+        let passedProfile = transientProfile;
+        if (!passedProfile && viewProfilePubkey === currentUser?.pubkey) {
+          passedProfile = currentUser.profile;
+        }
+
         return <Profile key={viewProfilePubkey} pubkey={viewProfilePubkey} profile={passedProfile} />;
       case 'blocked':
         return <BlockedUsers />;

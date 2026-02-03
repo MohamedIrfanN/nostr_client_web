@@ -136,6 +136,11 @@ const Feed: React.FC = () => {
             setFollowingSet(new Set(following));
             setMyPubkey(me.pubkey);
             setIsFiltersLoaded(true);
+
+            // If cache is empty, trigger immediate history load
+            if (feedCache.getEvents().length === 0) {
+                loadMoreHistory();
+            }
         }).catch(err => {
             console.error("Failed to load feed filters", err);
             setIsFiltersLoaded(true);
@@ -176,9 +181,9 @@ const Feed: React.FC = () => {
 
         // 2. Immediate backfill: Load previous 12 hours after initial feed loads
         const backfillTimer = setTimeout(() => {
-            // Only trigger if not already loading and we have some initial posts
-            if (!isLoadingMore && feedCache.getEvents().length > 0) {
-                console.log('Starting immediate backfill...');
+            // Only trigger if not already loading
+            if (!isLoadingMore) {
+                console.log('Starting backfill safety check...');
                 loadMoreHistory();
             }
         }, 3000); // Wait 3 seconds for initial live feed to populate

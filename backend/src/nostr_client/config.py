@@ -9,7 +9,15 @@ RELAYS = [
     "wss://relay.primal.net",
     "wss://nostr.land",
     "ws://localhost:8888"
+]
 
+# Search-capable relays (NIP-50)
+# Ordered by reliability - will query all and combine results
+SEARCH_RELAYS = [
+    "wss://relay.nostr.band",
+    "wss://search.nos.today",
+    "wss://nostr.wine",
+    "wss://relay.snort.social",
 ]
 
 PING_INTERVAL = 20

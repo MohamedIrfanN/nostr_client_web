@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
+import { followingService } from '../services/followingCache';
 import type { NostrEvent } from '../services/api';
 import { getProfileWithCache, getCachedUserPosts, cacheUserPosts, getCurrentUser } from '../services/profileCache';
 import { wsService } from '../services/websocket';
@@ -22,8 +23,12 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
     const [profile, setProfile] = useState(initialProfile);
     const [stats, setStats] = useState<{ following_count: number; followers_count: number } | null>(null);
-    const [relationshipStatus, setRelationshipStatus] = useState<'loading' | 'ready'>('loading');
-    const [isFollowing, setIsFollowing] = useState<boolean>(false);
+    const [relationshipStatus, setRelationshipStatus] = useState<'loading' | 'ready'>(
+        followingService.isLoaded() ? 'ready' : 'loading'
+    );
+    const [isFollowing, setIsFollowing] = useState<boolean>(
+        followingService.isFollowing(pubkey)
+    );
 
     // Mute state
     const [isMuted, setIsMuted] = useState<boolean>(false);

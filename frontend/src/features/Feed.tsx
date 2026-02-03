@@ -7,11 +7,15 @@ import { feedCache } from '../services/feedCache';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { api } from '../services/api';
+import { followingService } from '../services/followingCache';
 
 const Feed: React.FC = () => {
     const [events, setEvents] = useState<NostrEvent[]>(feedCache.getEvents());
     const [mutedSet, setMutedSet] = useState<Set<string>>(new Set());
+    const [followingSet, setFollowingSet] = useState<Set<string>>(followingService.getFollowing());
+    const [myPubkey, setMyPubkey] = useState<string>("");
     const [isLive, setIsLive] = useState(false);
+    const [isFiltersLoaded, setIsFiltersLoaded] = useState(followingService.isLoaded());
 
     // Infinite Scroll State
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -122,8 +126,20 @@ const Feed: React.FC = () => {
 
     // Initial Load & Scroll Listener
     useEffect(() => {
-        // Fetch Mute List
-        api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+        // Fetch filters first
+        Promise.all([
+            api.getMyMuted(),
+            api.getMyFollowing(),
+            api.getMe()
+        ]).then(([muted, following, me]) => {
+            setMutedSet(new Set(muted));
+            setFollowingSet(new Set(following));
+            setMyPubkey(me.pubkey);
+            setIsFiltersLoaded(true);
+        }).catch(err => {
+            console.error("Failed to load feed filters", err);
+            setIsFiltersLoaded(true);
+        });
 
         // Only fetch from cache initially, don't clear it to prevent blinking
         const cached = feedCache.getEvents();
@@ -191,6 +207,17 @@ const Feed: React.FC = () => {
         return () => observer.disconnect();
     }, [loadMoreHistory]);
 
+    // Wait for filters before rendering cache to avoid "ghost" posts
+    if (!isFiltersLoaded && events.length === 0) {
+        return (
+            <div className="feed-view">
+                <div className="loading-state">
+                    <LoadingSpinner label="Loading feed..." size="large" />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="feed-view">
             {isLive && (
@@ -211,7 +238,10 @@ const Feed: React.FC = () => {
 
             <div className="posts-list">
                 {events
-                    .filter(ev => !mutedSet.has(ev.pubkey))
+                    .filter(ev =>
+                        !mutedSet.has(ev.pubkey) && // Hide blocked
+                        (followingSet.has(ev.pubkey) || ev.pubkey === myPubkey) // Hide unfollowed (except self)
+                    )
                     .map((event) => (
                         <PostCard key={event.id} event={event} />
                     ))}

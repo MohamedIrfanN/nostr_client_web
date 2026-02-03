@@ -1,3 +1,5 @@
+import { followingService } from './followingCache';
+
 const API_BASE_URL = 'http://localhost:8000'; // Adjust if backend port is different
 
 export interface NostrEvent {
@@ -53,6 +55,9 @@ export const api = {
     },
 
     async followUser(pubkey: string): Promise<number> {
+        // Optimistic update
+        followingService.addFollow(pubkey);
+
         const response = await fetch(`${API_BASE_URL}/follow`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -63,6 +68,9 @@ export const api = {
     },
 
     async unfollowUser(pubkey: string): Promise<number> {
+        // Optimistic update
+        followingService.removeFollow(pubkey);
+
         const response = await fetch(`${API_BASE_URL}/unfollow`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -170,7 +178,9 @@ export const api = {
             throw new Error('Failed to fetch following list');
         }
         const data = await response.json();
-        return data.following || [];
+        const list = data.following || [];
+        followingService.setFollowing(list);
+        return list;
     },
 
     async getMyMuted(): Promise<string[]> {

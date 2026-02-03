@@ -16,10 +16,10 @@ from .nostr_client.events import (
     build_signed_comment,
 )
 from .nostr_client.publish import publish_to_relays
-from .nostr_client.contacts import fetch_following_all_relays, fetch_followers_all_relays, apply_follow, apply_unfollow
+from .nostr_client.contacts import fetch_following_all_relays, fetch_followers_all_relays, apply_follow, apply_unfollow, update_following_cache, start_contact_watcher
 from .nostr_client.profile_search import fetch_profile_by_pubkey, search_profiles_by_name
 from .nostr_client.dm_subscribe import fetch_dm_inbox_7d, fetch_dm_history_7d, _decrypt, _extract_partner
-from .nostr_client.mute_list import fetch_published_mute_set
+from .nostr_client.mute_list import fetch_published_mute_set, publish_mute_set, update_mute_cache, start_mute_watcher
 from .nostr_client.feed import fetch_feed_events
 from .nostr_client.relay_manager import RelayManager
 
@@ -34,6 +34,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    _, my_pubkey = _get_keys()
+    # Start the permanent contact list watcher in background
+    asyncio.create_task(start_contact_watcher(my_pubkey))
+    # Start the permanent mute list watcher
+    asyncio.create_task(start_mute_watcher(my_pubkey))
 
 
 class PublishIn(BaseModel):
@@ -113,9 +122,12 @@ async def _relay_stream_task(relay: str, reqs: list[list], queue: asyncio.Queue,
         return
 
 
-async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: int):
+
+async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: int, blocked_set: set[str] | None = None):
     eose_count = 0
     eose_sent = False
+    connection_start = int(time.time())
+    blocked_set = blocked_set or set()
     
     while True:
         payload = await queue.get()
@@ -127,6 +139,22 @@ async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: 
                 await websocket.send_json({"type": "eose"})
                 eose_sent = True
             continue
+        
+        # Check backend mute filter for live events
+        ev = payload.get("event")
+        if ev:
+            # Check if this is a "live" event (created after we started listening)
+            # We add a small buffer (e.g. -5s) to avoid race conditions but generally "live" means "new".
+            # For strictness: created_at > connection_start
+            created_at = ev.get("created_at", 0)
+            
+            # Identify the author to block (sender)
+            # For DMs, the sender is ev['pubkey'].
+            author = ev.get("pubkey")
+            
+            if author in blocked_set and created_at > connection_start:
+                print(f"[WS] 🚫 Blocking live event from muted user {author[:8]}")
+                continue
             
         await websocket.send_json(payload)
 
@@ -134,10 +162,13 @@ async def _ws_sender(websocket: WebSocket, queue: asyncio.Queue, expected_eose: 
 async def _ws_keepalive(websocket: WebSocket, interval: float = 20.0):
     while True:
         await asyncio.sleep(interval)
-        await websocket.send_json({"type": "ping"})
+        try:
+            await websocket.send_json({"type": "ping"})
+        except Exception:
+            break
 
 
-async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str):
+async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], event_type: str, blocked_set: set[str] | None = None):
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue()
     seen: set[str] = set()
@@ -148,7 +179,7 @@ async def _run_ws(websocket: WebSocket, reqs_by_relay: dict[str, list[list]], ev
     ]
     
     expected_eose = sum(len(reqs) for reqs in reqs_by_relay.values())
-    sender = asyncio.create_task(_ws_sender(websocket, queue, expected_eose))
+    sender = asyncio.create_task(_ws_sender(websocket, queue, expected_eose, blocked_set))
     keepalive = asyncio.create_task(_ws_keepalive(websocket))
 
     try:
@@ -295,6 +326,10 @@ async def follow_user(payload: FollowIn):
 
     current = await fetch_following_all_relays(my_pubkey)
     updated = apply_follow(current, pk)
+    
+    # Update cache immediately
+    update_following_cache(my_pubkey, updated)
+    
     eid, ev = build_signed_contacts_event(privkey, sorted(updated))
     await publish_to_relays(eid, ev)
     return {"following": len(updated)}
@@ -310,9 +345,62 @@ async def unfollow_user(payload: FollowIn):
 
     current = await fetch_following_all_relays(my_pubkey)
     updated = apply_unfollow(current, pk)
+    
+    # Update cache immediately
+    update_following_cache(my_pubkey, updated)
+    
     eid, ev = build_signed_contacts_event(privkey, sorted(updated))
     await publish_to_relays(eid, ev)
     return {"following": len(updated)}
+
+
+@app.get("/me/muted")
+async def get_my_muted():
+    _, my_pubkey = _get_keys()
+    muted = await fetch_published_mute_set(my_pubkey)
+    return {"muted": list(muted)}
+
+
+@app.post("/mute")
+async def mute_user(payload: FollowIn):
+    privkey, my_pubkey = _get_keys()
+    try:
+        pk = normalize_pubkey_input(payload.pubkey)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    current = await fetch_published_mute_set(my_pubkey)
+    if pk not in current:
+        current.add(pk)
+        
+        # Update cache immediately
+        update_mute_cache(my_pubkey, current)
+        
+        eid, ev = await publish_mute_set(privkey, current)
+        await publish_to_relays(eid, ev)
+    
+    return {"muted_count": len(current)}
+
+
+@app.post("/unmute")
+async def unmute_user(payload: FollowIn):
+    privkey, my_pubkey = _get_keys()
+    try:
+        pk = normalize_pubkey_input(payload.pubkey)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    current = await fetch_published_mute_set(my_pubkey)
+    if pk in current:
+        current.remove(pk)
+        
+        # Update cache immediately
+        update_mute_cache(my_pubkey, current)
+        
+        eid, ev = await publish_mute_set(privkey, current)
+        await publish_to_relays(eid, ev)
+
+    return {"muted_count": len(current)}
 
 
 @app.get("/search")
@@ -492,6 +580,9 @@ async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | Non
         filter_recv["limit"] = int(limit)
         filter_sent["limit"] = int(limit)
 
+    # Fetch mute list to block LIVE events
+    blocked_set = await fetch_published_mute_set(my_pubkey)
+
     reqs_by_relay: dict[str, list[list]] = {}
     for relay in RELAYS:
         sub_id = relay_manager.new_sub_id()
@@ -503,7 +594,7 @@ async def ws_dm(websocket: WebSocket, since: int | None = None, limit: int | Non
             )
         ]
 
-    await _run_ws(websocket, reqs_by_relay, event_type="dm")
+    await _run_ws(websocket, reqs_by_relay, event_type="dm", blocked_set=blocked_set)
 
 
 @app.websocket("/ws/notify")

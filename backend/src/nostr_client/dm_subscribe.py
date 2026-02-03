@@ -98,8 +98,8 @@ async def fetch_dm_inbox_7d(privkey, my_pubkey: str, blocked_set: set[str] | Non
                     seen_ids.add(eid)
 
                     direction, partner = _extract_partner(my_pubkey, event)
-                    if partner in blocked_set:
-                        return
+                    # if partner in blocked_set:
+                    #     return
                     ts = event.get("created_at") or 0
                     text = _decrypt(privkey, partner, event.get("content") or "")
 

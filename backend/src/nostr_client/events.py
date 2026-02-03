@@ -262,15 +262,14 @@ def build_signed_mute_list(
     content: str = "",
 ) -> tuple[str, dict]:
     """
-    NIP-51 mute list (parameterized list)
-    kind: 30000
+    NIP-51 mute list (Kind 10000)
+    kind: 10000
     tags:
-      ["d", "mute"]
       ["p", <pubkey>]...
     """
     pubkey = pubkey_xonly_hex(privkey)
     created_at = int(time.time())
-    kind = 30000
+    kind = 10000
 
     # normalize + dedupe
     clean: list[str] = []
@@ -289,7 +288,7 @@ def build_signed_mute_list(
         clean.append(pk)
     clean.sort()
 
-    tags: list[list[str]] = [["d", "mute"]] + [["p", pk] for pk in clean]
+    tags: list[list[str]] = [["p", pk] for pk in clean]
     content = (content or "").strip()
 
     event_id = _event_id_from_fields(pubkey, created_at, kind, tags, content)

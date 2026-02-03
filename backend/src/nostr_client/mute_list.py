@@ -10,12 +10,18 @@ from .relay_manager import RelayManager
 
 RECV_TIMEOUT = 3.0  # prevents "stuck"
 
+
 relay_manager = RelayManager()
+
+# Cache: pubkey -> set of muted pubkeys
+_MUTE_LIST_CACHE: dict[str, set[str]] = {}
+
+def update_mute_cache(my_pubkey: str, new_set: set[str]):
+    _MUTE_LIST_CACHE[my_pubkey] = new_set
 
 def _extract_mute_pubkeys(event: dict) -> set[str]:
     """
-    kind:30000 list, tags include:
-      ["d","mute"]
+    kind:10000 list, tags include:
       ["p","<pubkey>"]
     """
     out: set[str] = set()
@@ -41,11 +47,15 @@ async def fetch_published_mute_set(my_pubkey: str) -> set[str]:
     """
     my_pubkey = require_32byte_hex(my_pubkey, "my pubkey")
 
+    # Check cache first
+    if my_pubkey in _MUTE_LIST_CACHE:
+        return _MUTE_LIST_CACHE[my_pubkey]
+
     async def _from_relay(relay: str):
         sub_id = relay_manager.new_sub_id()
         req = relay_manager.make_req(
             sub_id,
-            {"kinds": [30000], "authors": [my_pubkey], "#d": ["mute"], "limit": 5},
+            {"kinds": [10000], "authors": [my_pubkey]},
         )
 
         best = None
@@ -83,12 +93,53 @@ async def fetch_published_mute_set(my_pubkey: str) -> set[str]:
         return set()
 
     newest = max(events, key=lambda e: int(e.get("created_at", 0)))
-    return _extract_mute_pubkeys(newest)
+    mute_set = _extract_mute_pubkeys(newest)
+    
+    # Update cache
+    _MUTE_LIST_CACHE[my_pubkey] = mute_set
+    return mute_set
+
+
+async def start_mute_watcher(my_pubkey: str):
+    """
+    Permanently subscribe to my own Kind 10000 (Mute List) updates.
+    """
+    print(f"[MUTE] Starting background watcher for {my_pubkey[:8]}")
+    
+    watcher_manager = RelayManager()
+    sub_id = watcher_manager.new_sub_id()
+    filters = {"authors": [my_pubkey], "kinds": [10000], "limit": 1}
+    
+    while True:
+        try:
+            relay_url = RELAYS[0] # Pick primary relay
+            print(f"[MUTE] Watcher connecting to {relay_url}...")
+            
+            async with watcher_manager.connect(relay_url) as ws:
+                req = watcher_manager.make_req(sub_id, filters)
+                await watcher_manager.send(ws, req)
+                
+                while True:
+                    msg = await watcher_manager.recv_json(ws)
+                    if not msg:
+                        continue
+                        
+                    if msg[0] == "EVENT":
+                        _, got_sub, ev = msg
+                        if got_sub == sub_id:
+                            print(f"[MUTE] Watcher received update via {relay_url}!")
+                            new_mute_set = _extract_mute_pubkeys(ev)
+                            update_mute_cache(my_pubkey, new_mute_set)
+                            print(f"[MUTE] Cache updated (New count: {len(new_mute_set)})")
+
+        except Exception as e:
+            print(f"[MUTE] Watcher error: {e}. Retrying in 5s...")
+            await asyncio.sleep(5)
 
 
 async def publish_mute_set(privkey, blocked_set: Iterable[str]):
     """
-    Publish updated mute list (kind:30000, d='mute') to all relays.
+    Publish updated mute list (kind:10000) to all relays.
     """
     clean = sorted({require_32byte_hex(pk, "blocked pubkey") for pk in blocked_set})
     eid, ev = build_signed_mute_list(privkey, clean)

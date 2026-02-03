@@ -173,6 +173,35 @@ export const api = {
         return data.following || [];
     },
 
+    async getMyMuted(): Promise<string[]> {
+        const response = await fetch(`${API_BASE_URL}/me/muted`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch muted list');
+        }
+        const data = await response.json();
+        return data.muted || [];
+    },
+
+    async muteUser(pubkey: string): Promise<number> {
+        const response = await fetch(`${API_BASE_URL}/mute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pubkey }),
+        });
+        const data = await response.json();
+        return data.muted_count;
+    },
+
+    async unmuteUser(pubkey: string): Promise<number> {
+        const response = await fetch(`${API_BASE_URL}/unmute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pubkey }),
+        });
+        const data = await response.json();
+        return data.muted_count;
+    },
+
     async getUserPosts(pubkey: string): Promise<NostrEvent[]> {
         const response = await fetch(`${API_BASE_URL}/users/${pubkey}/posts`);
         if (!response.ok) {

@@ -17,7 +17,7 @@ const Feed: React.FC = () => {
     const [oldestFetchedTime, setOldestFetchedTime] = useState<number | null>(null);
     // Track consecutive empty fetches to prevent infinite searching through sparse history
     const [consecutiveEmptyFetches, setConsecutiveEmptyFetches] = useState(0);
-    const MAX_EMPTY_FETCHES = 3; // Stop after 3 empty windows
+    const MAX_EMPTY_FETCHES = 10; // Try up to 5 days (10 * 12h)
 
     const eventsEndRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +108,14 @@ const Feed: React.FC = () => {
             }
         );
     }, [isLoadingMore, oldestFetchedTime, consecutiveEmptyFetches]);
+
+    // Auto-retry on empty window to keep searching back in time
+    useEffect(() => {
+        if (consecutiveEmptyFetches > 0 && consecutiveEmptyFetches < MAX_EMPTY_FETCHES && !isLoadingMore) {
+            console.log(`Auto-loading next window (Empty fetch retry ${consecutiveEmptyFetches})...`);
+            loadMoreHistory();
+        }
+    }, [consecutiveEmptyFetches, isLoadingMore, loadMoreHistory]);
 
     // Initial Load & Scroll Listener
     useEffect(() => {

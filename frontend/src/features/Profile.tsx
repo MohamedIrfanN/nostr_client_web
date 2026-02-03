@@ -25,6 +25,10 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const [relationshipStatus, setRelationshipStatus] = useState<'loading' | 'ready'>('loading');
     const [isFollowing, setIsFollowing] = useState<boolean>(false);
 
+    // Mute state
+    const [isMuted, setIsMuted] = useState<boolean>(false);
+    const [muteLoading, setMuteLoading] = useState(false);
+
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
     const [copied, setCopied] = useState(false);
@@ -40,12 +44,20 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
 
         // Reset state on profile change
         setRelationshipStatus('loading');
+        setIsMuted(false);
 
         const loadProfile = async () => {
             // Get current user pubkey to verify if it's "Me"
             if (!currentUserPubkey) {
                 api.getMe().then(me => {
                     if (isMounted) setCurrentUserPubkey(me.pubkey);
+                }).catch(console.error);
+            }
+
+            // Check mute status
+            if (currentUserPubkey && currentUserPubkey !== pubkey) {
+                api.getMyMuted().then(mutedList => {
+                    if (isMounted) setIsMuted(mutedList.includes(pubkey));
                 }).catch(console.error);
             }
 
@@ -149,6 +161,38 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         }
     };
 
+    const handleMute = async () => {
+        if (muteLoading) return;
+        setMuteLoading(true);
+        setIsMuted(true); // Optimistic
+
+        try {
+            await api.muteUser(pubkey);
+        } catch (err) {
+            console.error('Mute failed', err);
+            setIsMuted(false); // Revert
+        } finally {
+            setMuteLoading(false);
+        }
+    };
+
+    const handleUnmute = async () => {
+        if (muteLoading) return;
+        setMuteLoading(true);
+        setIsMuted(false); // Optimistic
+
+        try {
+            await api.unmuteUser(pubkey);
+        } catch (err) {
+            console.error('Unmute failed', err);
+            setIsMuted(true); // Revert
+        } finally {
+            setMuteLoading(false);
+        }
+    };
+
+
+
     // WebSocket Stream for Posts
     useEffect(() => {
         // 1. Try Cache First
@@ -221,40 +265,61 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
     const renderActionButton = () => {
         if (isLoadingProfile || !currentUserPubkey) return null; // Skeleton or loading
 
+        const muteButton = (
+            <button
+                className={`edit-profile-btn glass ${isMuted ? 'muted-active' : ''}`}
+                onClick={isMuted ? handleUnmute : handleMute}
+                disabled={muteLoading}
+                style={{ marginLeft: '8px', opacity: isMuted ? 0.7 : 1 }}
+            >
+                {muteLoading ? '...' : (isMuted ? 'Unmute' : 'Mute')}
+            </button>
+        );
+
         if (isMe) {
             return <button className="edit-profile-btn glass">Edit profile</button>;
         }
 
+        // Wait for relationship check
         if (relationshipStatus === 'loading') {
             return (
-                <button className="edit-profile-btn glass" disabled>
-                    Checking...
-                </button>
+                <div style={{ display: 'flex' }}>
+                    <button className="edit-profile-btn glass" disabled>
+                        Checking...
+                    </button>
+                    {muteButton}
+                </div>
             );
         }
 
         if (isFollowing) {
             return (
-                <button
-                    className={`edit-profile-btn glass following-btn ${isHoveringFollow ? 'unfollow-danger' : ''}`}
-                    onClick={handleUnfollow}
-                    onMouseEnter={() => setIsHoveringFollow(true)}
-                    onMouseLeave={() => setIsHoveringFollow(false)}
-                    disabled={followLoading}
-                >
-                    {isHoveringFollow ? 'Unfollow' : 'Following'}
-                </button>
+                <div style={{ display: 'flex' }}>
+                    <button
+                        className={`edit-profile-btn glass following-btn ${isHoveringFollow ? 'unfollow-danger' : ''}`}
+                        onClick={handleUnfollow}
+                        onMouseEnter={() => setIsHoveringFollow(true)}
+                        onMouseLeave={() => setIsHoveringFollow(false)}
+                        disabled={followLoading}
+                    >
+                        {isHoveringFollow ? 'Unfollow' : 'Following'}
+                    </button>
+                    {muteButton}
+                </div>
             );
         }
 
         return (
-            <button
-                className="edit-profile-btn glass follow-primary"
-                onClick={handleFollow}
-                disabled={followLoading}
-            >
-                Follow
-            </button>
+            <div style={{ display: 'flex' }}>
+                <button
+                    className="edit-profile-btn glass follow-primary"
+                    onClick={handleFollow}
+                    disabled={followLoading}
+                >
+                    Follow
+                </button>
+                {muteButton}
+            </div>
         );
     };
 
@@ -492,6 +557,12 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
             border-color: #ef4444; /* red-500 */
             color: #ef4444;
             background: rgba(239, 68, 68, 0.1);
+        }
+
+        .muted-active {
+            border-color: #ef4444;
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.2);
         }
 
         .profile-metadata {

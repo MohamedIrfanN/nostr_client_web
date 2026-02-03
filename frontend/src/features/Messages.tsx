@@ -25,6 +25,7 @@ const Messages: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
+  const [mutedSet, setMutedSet] = useState<Set<string>>(new Set());
 
   // Debounce ref to prevent render storms
   const updateTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +76,9 @@ const Messages: React.FC = () => {
   };
 
   useEffect(() => {
+    // Load muted list
+    api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+
     // 1. Load cache immediately
     if (dmCache.hasFetched()) {
       updateInboxFromCache().then(() => setLoading(false));
@@ -171,6 +175,7 @@ const Messages: React.FC = () => {
             const gradient = generateGradient(chat.pubkey);
             const initials = getInitials(displayName);
             const hasImage = chat.picture && !imageErrors.has(chat.pubkey);
+            const isMuted = mutedSet.has(chat.pubkey);
 
             return (
               <div
@@ -196,6 +201,7 @@ const Messages: React.FC = () => {
                   <div className="inbox-header">
                     <span className="inbox-name" style={!hasName ? { fontFamily: 'monospace', fontSize: '0.9em' } : {}}>
                       {displayName}
+                      {isMuted && <span style={{ color: '#ef4444', marginLeft: '6px', fontSize: '0.8em', border: '1px solid #ef4444', padding: '2px 4px', borderRadius: '4px' }}>🚫 Blocked</span>}
                     </span>
                     <span className="inbox-time">
                       {formatRelativeTime(chat.last_event_at)}

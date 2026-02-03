@@ -32,6 +32,8 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [imageError, setImageError] = useState(false);
+  const [mutedSet, setMutedSet] = useState<Set<string>>(new Set());
+  const [muteProcessing, setMuteProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom
@@ -51,6 +53,30 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
       document.body.style.overflow = '';
     };
   }, []);
+
+  // Fetch mute list
+  useEffect(() => {
+    api.getMyMuted().then(list => setMutedSet(new Set(list))).catch(console.error);
+  }, []);
+
+  const isMuted = mutedSet.has(partnerPubkey);
+
+  const handleUnblock = async () => {
+    setMuteProcessing(true);
+    try {
+      await api.unmuteUser(partnerPubkey);
+      setMutedSet(prev => {
+        const next = new Set(prev);
+        next.delete(partnerPubkey);
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to unblock:", err);
+      alert("Failed to unblock user.");
+    } finally {
+      setMuteProcessing(false);
+    }
+  };
 
   // Fetch profile picture
   useEffect(() => {
@@ -73,14 +99,40 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
     setMessages([]);
     setError(null);
 
+    // If muted, we still might want to see history, but typically blocking means "I don't want to see them".
+    // But per request: "going into their chatting screen its okay to display the chats".
+    // However, "we shouldnt receive their messages" applies to NEW messages.
+
     const cleanup = wsService.connect(
       `dm?partner_pubkey=${partnerPubkey}&limit=50`,
       (message) => {
         if (message.type === 'dm' && message.event) {
           const ev = message.event;
 
-          // Verify it belongs to this chat (redundant if backend filters work, but safe)
+          // Verify it belongs to this chat
           if (ev.partner_pubkey === partnerPubkey) {
+            // Filter NEW incoming messages if blocked
+            // Note: This relies on the current state of 'mutedSet' which might be stale in a closure
+            // But since we mount/unmount chat, it should be fine.
+            // Better: we can check the mute list if it was a ref, but `isMuted` here is captured.
+            // Actually, since we want to allow HISTORY but block NEW, it's tricky to distinguish solely on client.
+            // But usually "receive" implies live updates.
+
+            // Simplest approach: We allow loading history (which comes instantly),
+            // but if it's a "live" event (how do we know? WS sends both), we might block it.
+            // Actually, 'dms' endpoint returns history.
+
+            // The user request: "shouldnt receive their messages".
+            // We can check if `from_me` is false and we are currently muted.
+
+            // To properly use the *latest* mutedSet in this callback, we need a ref or access it via setState logic.
+            // Since `mutedSet` is a dependency, this effect restarts if mutedSet changes. That's fine.
+
+            if (mutedSet.has(partnerPubkey) && !ev.from_me) {
+              // Skip incoming messages from blocked user
+              return;
+            }
+
             const incomingMessage: Message = {
               id: ev.id,
               content: ev.content,
@@ -90,7 +142,6 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
 
             setMessages(prev => {
               if (prev.some(m => m.id === incomingMessage.id)) return prev;
-              // Chat: Sort Oldest -> Newest
               return [...prev, incomingMessage].sort((a, b) => a.created_at - b.created_at);
             });
             setLoading(false);
@@ -106,14 +157,13 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
       }
     );
 
-    // Timeout safety
     const timeout = setTimeout(() => setLoading(false), 2000);
 
     return () => {
       cleanup();
       clearTimeout(timeout);
     };
-  }, [partnerPubkey]);
+  }, [partnerPubkey, mutedSet]); // Restart stream if mute status changes (to apply filter)
 
   const handleSend = async () => {
     if (!newMessage.trim() || sending) return;
@@ -222,26 +272,61 @@ const ChatView: React.FC<ChatViewProps> = ({ partnerPubkey, partnerName, onBack 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Fixed Input */}
+      {/* Fixed Input or Block Banner */}
       <div className="chat-input-container">
-        <textarea
-          className="chat-input"
-          placeholder="Type a message..."
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          onKeyPress={handleKeyPress}
-          disabled={sending}
-          rows={1}
-        />
-        <button
-          className="chat-send-btn"
-          onClick={handleSend}
-          disabled={!newMessage.trim() || sending}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-          </svg>
-        </button>
+        {isMuted ? (
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
+            padding: '10px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            borderRadius: '12px',
+            color: '#ef4444'
+          }}>
+            <span style={{ fontWeight: 500 }}>🚫 You have blocked this user</span>
+            <button
+              onClick={handleUnblock}
+              disabled={muteProcessing}
+              style={{
+                background: '#ef4444',
+                color: 'white',
+                border: 'none',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600
+              }}
+            >
+              {muteProcessing ? 'Unblocking...' : 'Unblock'}
+            </button>
+          </div>
+        ) : (
+          <>
+            <textarea
+              className="chat-input"
+              placeholder="Type a message..."
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              disabled={sending}
+              rows={1}
+            />
+            <button
+              className="chat-send-btn"
+              onClick={handleSend}
+              disabled={!newMessage.trim() || sending}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

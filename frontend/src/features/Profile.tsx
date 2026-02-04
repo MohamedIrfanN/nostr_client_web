@@ -179,7 +179,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         try {
             await api.muteUser(pubkey);
         } catch (err) {
-            console.error('Mute failed', err);
+            console.error('Block failed', err);
             setIsMuted(false); // Revert
         } finally {
             setMuteLoading(false);
@@ -194,7 +194,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
         try {
             await api.unmuteUser(pubkey);
         } catch (err) {
-            console.error('Unmute failed', err);
+            console.error('Unblock failed', err);
             setIsMuted(true); // Revert
         } finally {
             setMuteLoading(false);
@@ -282,7 +282,7 @@ const Profile: React.FC<ProfileProps> = ({ pubkey, profile: initialProfile }) =>
                 disabled={muteLoading}
                 style={{ marginLeft: '8px', opacity: isMuted ? 0.7 : 1 }}
             >
-                {muteLoading ? '...' : (isMuted ? 'Unmute' : 'Mute')}
+                {muteLoading ? '...' : (isMuted ? 'Unblock' : 'Block')}
             </button>
         );
 

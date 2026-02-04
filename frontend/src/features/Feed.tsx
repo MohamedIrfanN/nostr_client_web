@@ -126,8 +126,8 @@ const Feed: React.FC = () => {
                         // This handles sorting and deduplication automatically via feedCache
                         setEvents(feedCache.getEvents(activeTab));
 
-                        // Flash "New post" indicator if it's recent
-                        if ((Date.now() / 1000) - newEvent.created_at < 120) {
+                        // Flash "New post" indicator if it's recent and on the Following tab
+                        if (activeTab === 'following' && (Date.now() / 1000) - newEvent.created_at < 120) {
                             setIsLive(true);
                             setTimeout(() => setIsLive(false), 2000);
                         }
